@@ -1,0 +1,316 @@
+JAM_INCLUDE_PATH ?= jam ;
+
+#############################
+# Internal help (`bjam --help`/`b2 --help`)
+#
+# # Setting build variables
+#
+# List with `bjam env_help`.
+#
+#     bjam -s FFMPEG_INC_PATH=$HOME/ffmpeg/includes ...
+#
+# Or with a shell variable
+#
+#     export FFMPEG_INC_PATH=$HOME/ffmpeg/includes
+#     bjam ....
+#
+# # Compilation
+#
+# (show `cxx_*` options with `bjam cxx_help`)
+# (default configration with `bjam print_default`)
+#
+# Compile executables without tests (as user):
+#
+#   bjam exe libs
+#
+# and install (as administrator):
+#
+#   bjam install
+#
+# Binaries are located by default in `/usr/local/bin`.
+#
+# # Install only resources without executable and library
+#
+#   bjam install-resources
+#
+# With this, executables created by bjam (bin folder) can be run without installation.
+#
+# ## Tests
+#
+#   bjam tests
+#   bjam tests/utils` all tests in tests/utils
+#   bjam tests/utils.norec` tests selected by tests/utils/test_*.cpp
+#
+# Verbose tests:
+#
+#   export REDEMPTION_LOG_PRINT=1
+#   bjam tests
+#
+#   REDEMPTION_LOG_PRINT=e  for error and debug only
+#   REDEMPTION_LOG_PRINT=d  for debug only
+#   REDEMPTION_LOG_PRINT=w  for other than info
+#
+#############################
+
+include $(JAM_INCLUDE_PATH)/redemption-config.jam ;
+include $(JAM_INCLUDE_PATH)/cxxflags.jam ;
+include $(JAM_INCLUDE_PATH)/defines.jam ;
+include $(JAM_INCLUDE_PATH)/includes.jam ;
+include $(JAM_INCLUDE_PATH)/sanitizer.jam ;
+include $(JAM_INCLUDE_PATH)/libs.jam ;
+
+project redemption
+    : requirements
+
+    $(REDEMPTION_CXXFLAGS)
+    $(REDEMPTION_FFMPEG_FLAGS)
+    $(REDEMPTION_BOOST_STACKTRACE_FLAGS)
+    $(GCOV)
+
+    <cxxflags>-fno-rtti
+    <toolset>gcc:<cxxflags>-pipe
+
+    # <cxx-lto-default>on
+    # <cxx-stack-protector-default>on # strong, all
+
+    # <cxxflags>-fpie
+
+   : default-build release
+;
+
+include $(JAM_INCLUDE_PATH)/testing-coverage.jam ;
+
+include $(JAM_INCLUDE_PATH)/ocr.jam ;
+include $(JAM_INCLUDE_PATH)/redemption-dependencies.jam ;
+
+include $(REDEMPTION_PUBLIC_PATH)/targets.jam ;
+
+
+actions gen_targets
+{
+    ./tools/bjam/gen_targets.py > targets.jam
+}
+
+explicit targets.jam ;
+make targets.jam : : @gen_targets ;
+
+rule bjam_help ( targets * : sources * : properties * )
+{
+    local ps = [ property-set.create $(properties) ] ;
+    local color = [ $(ps).get <cxx-color> ] ;
+    local options = ;
+    if $(color) = "never"
+    {
+        color = --color=never ;
+    }
+    else
+    {
+        color = --color=always ;
+    }
+    OPTIONS on $(targets) = $(color) [ $(ps).get <action><option> ] ;
+}
+
+actions bjam_help
+{
+    ./tools/bjam/bjam_help.sh $(OPTIONS)
+}
+
+explicit env_help cxx_help ;
+make env_help : : @bjam_help <option>project ;
+make cxx_help : : @bjam_help <option>compiler ;
+
+
+rule print_default ( targets * : sources * : properties * )
+{
+    echo "Properties:" ;
+    local ps = [ property-set.create $(properties) ] ;
+    for p in [ $(ps).raw ]
+    {
+        echo "$(p)" ;
+    }
+}
+
+explicit print_default ;
+make print_default : : @print_default ;
+
+explicit
+    install
+    instexe
+    install-bin
+    install-lib
+    install-resources
+    install-share
+    install-etc
+    install-etc-ppocr
+    install-etc-ppocr-latin
+    install-etc-ppocr-latin-cyrillic
+    exe
+    libs
+;
+
+alias instexe : install-bin ;
+alias install-resources : 
+    install-etc
+    install-etc-ppocr
+    install-share
+    install-gettext
+;
+alias install : install-bin install-lib install-resources ;
+alias exe     : rdpproxy headlessclient rdpinichecker ;
+alias libs    : libredrec ;
+
+alias ocr_tools : extract_text ppocr_extract_text ;
+
+alias install-etc-ppocr : install-etc-ppocr-latin install-etc-ppocr-latin-cyrillic ;
+
+install install-bin
+    : exe
+    : <install-type>EXE
+      #<install-dependencies>on
+    : <location>$(INSTALLDIR)$(BIN_PREFIX)
+    ;
+
+install install-share
+    : [ glob "$(REDEMPTION_SYS_PATH)/share/rdpproxy/*" ]
+    :
+    : <location>$(INSTALLDIR)$(SHARE_PREFIX)
+    ;
+
+install install-etc
+    : [ glob $(REDEMPTION_ETC_DH_GLOG) ]
+    :
+    : <location>$(INSTALLDIR)$(ETC_PREFIX)
+    ;
+
+install install-etc-ppocr-latin
+    : [ glob $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin/* ]
+    :
+    : <location>$(INSTALLDIR)$(ETC_PREFIX)/ppocr.latin
+    ;
+
+install install-etc-ppocr-latin-cyrillic
+    : [ glob $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin-cyrillic/* ]
+    :
+    : <location>$(INSTALLDIR)$(ETC_PREFIX)/ppocr.latin-cyrillic
+    ;
+
+install install-lib
+    : libs
+    :
+    : <location>$(INSTALLDIR)$(LIB_PREFIX)
+    ;
+
+
+exe redrec
+:
+    $(REDEMPTION_SRC_PATH)/main/redrec.cpp
+    libredrec
+:
+    $(EXE_DEPENDENCIES)
+;
+
+
+## ppocr resources {
+
+exe ppocr_write_glyphs :
+    $(PPOCR_SRC_PATH)/ppocr/write_glyphs.cpp
+    ppocr
+:
+    $(EXE_DEPENDENCIES_NO_SYSLOG)
+;
+
+exe ppocr_normalize_glyphs :
+    $(PPOCR_SRC_PATH)/ppocr/normalize_glyphs.cpp
+    ppocr
+:
+    $(EXE_DEPENDENCIES_NO_SYSLOG)
+;
+
+exe ppocr_write_datas :
+    $(PPOCR_SRC_PATH)/ppocr/write_datas.cpp
+    ppocr
+:
+    $(EXE_DEPENDENCIES_NO_SYSLOG)
+;
+
+
+actions make_ppocr_resources {
+    $(PPOCR_MODULE_PATH)/learning "$(>)"
+    # latin
+    cp $(PPOCR_MODULE_PATH)/resources/glyphs/normalized-glyphs-latin.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin/glyphs.txt
+    cp $(PPOCR_MODULE_PATH)/resources/datas/latin.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin/datas.txt
+    cp $(PPOCR_MODULE_PATH)/resources/dict_fr.trie \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin/dict.trie.txt
+    cp $(PPOCR_MODULE_PATH)/resources/words_lines-latin.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin/words_lines.txt
+
+    # latin-cyrillic
+    cp $(PPOCR_MODULE_PATH)/resources/glyphs/normalized-glyphs-latin-cyrillic.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin-cyrillic/glyphs.txt
+    cp $(PPOCR_MODULE_PATH)/resources/datas/latin-cyrillic.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin-cyrillic/datas.txt
+    cp $(PPOCR_MODULE_PATH)/resources/words_lines-latin-cyrillic.txt \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin-cyrillic/words_lines.txt
+    cp $(PPOCR_MODULE_PATH)/resources/dict_fr.trie \
+       $(REDEMPTION_SYS_PATH)/etc/rdpproxy/ppocr.latin-cyrillic/dict.trie.txt
+}
+
+explicit ppocr_resources ppocr_write_glyphs ppocr_normalize_glyphs ppocr_write_datas ;
+
+make ppocr_resources :
+    ppocr_write_glyphs
+    ppocr_normalize_glyphs
+    ppocr_write_datas
+:
+    @make_ppocr_resources
+;
+
+## } ppocr resources
+
+
+
+# Compile all translation files and build gettext environment:
+#
+#   bjam install-gettext
+#
+## gettext {
+actions gen_gettext_mo
+{
+    $(REDEMPTION_PUBLIC_PATH)/tools/i18n/gen_catalog.sh compile "$(<).d" && :>"$(<)"
+}
+actions gettext_install
+{
+    d="$(INSTALLDIR)$(SHARE_PREFIX)/$(>:B)"
+    mkdir -p "$d"
+    cp -R "$(>).d"/* "$d" ;
+}
+
+explicit install-gettext ;
+make install-gettext : locale : @gettext_install ;
+
+explicit locale ;
+make locale :
+  $(REDEMPTION_PUBLIC_PATH)/tools/i18n/po/fr/redemption.po
+  $(REDEMPTION_PUBLIC_PATH)/tools/i18n/po/en/redemption.po
+: @gen_gettext_mo ;
+
+
+actions update_gettext_po
+{
+    $(REDEMPTION_PUBLIC_PATH)/tools/i18n/gen_catalog.sh extract
+    $(REDEMPTION_PUBLIC_PATH)/tools/i18n/gen_catalog.sh merge
+}
+explicit update-po ;
+make update-po : : @update_gettext_po ;
+## gettext }
+
+
+
+actions cwd
+{
+    echo "CWD: $(>[1]:D)"
+}
+make cwd : app_path_exe.o : @cwd ;
+explicit cwd ;

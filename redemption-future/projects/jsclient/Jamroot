@@ -1,0 +1,397 @@
+using emscripten ;
+
+REDEMPTION_PUBLIC_PATH ?= [ SHELL "readlink -n -f ../.." ] ;
+
+ECHO "redemption-src: $(REDEMPTION_PUBLIC_PATH)" ;
+
+JAM_INCLUDE_PATH ?= $(REDEMPTION_PUBLIC_PATH)/jam ;
+REDEMPTION_INCLUDE_PATH ?= $(REDEMPTION_PUBLIC_PATH)/include ;
+REDEMPTION_MODULES_SRC_PATH ?= $(REDEMPTION_PUBLIC_PATH)/modules ;
+SYSTEM_TYPE = emscripten ;
+## disable some paths
+## @{
+OCR1_INCLUDE_PATH = "" ;
+MLN_INCLUDES_PATH = "" ;
+PPOCR_INCLUDES_PATH = "" ;
+PROGRAM_OPTIONS_INCLUDES_PATH = "" ;
+SYSTEM_SRC_PATH ?= "" ;
+## }
+
+include $(JAM_INCLUDE_PATH)/redemption-config.jam ;
+include $(JAM_INCLUDE_PATH)/defines.jam ;
+include $(JAM_INCLUDE_PATH)/cxxflags.jam ;
+include $(JAM_INCLUDE_PATH)/includes.jam ;
+include $(JAM_INCLUDE_PATH)/sanitizer.jam ;
+
+# reimplementation of "include $(JAM_INCLUDE_PATH)/lib.jam ;"
+## @{
+alias bz2 ;
+alias crypto ;
+alias dl ;
+alias gssapi_krb5 ;
+alias krb5 ;
+alias openssl ;
+alias snappy ;
+alias z ;
+alias png ;
+alias ffmpeg ;
+alias ppocr ;
+REDEMPTION_CXXFLAGS +=
+    #REDEMPTION_FFMPEG_FLAGS =
+    # <define>REDEMPTION_NO_FFMPEG=1
+    #REDEMPTION_HYPERSCAN_FLAGS =
+    # <define>REDEMPTION_NO_HYPERSCAN=1
+    #BOOST_STACKTRACE_CXXFLAGS =
+    <define>REDEMPTION_NO_STACKTRACE  # only for utils/stacktrace.hpp (error.cpp dependency)
+;
+## }
+
+EXE_DEPENDENCIES +=
+    <cxxflags>"--no-entry"
+    # <linkflags>"-s ABORTING_MALLOC=0"
+    <linkflags>"-s EXPORTED_RUNTIME_METHODS=['stringToUTF16']"
+
+    <linkflags>"-s STACK_SIZE=1MB"
+    <linkflags>"-s INITIAL_MEMORY=2MB"
+    # <linkflags>"-s MAXIMUM_MEMORY=4GB"  # default is 2GB
+    <linkflags>"-s ALLOW_MEMORY_GROWTH=1"
+;
+
+constant JS_MODULE_NAME : [ setvar JS_MODULE_NAME : "WallixModule" ] ;
+constant JS_SOURCE_MAP : [ setvar JS_SOURCE_MAP : "'./'" ] ;
+constant JS_CLIENT_COPY_MODE : [ setvar copy_application_mode : "copy" ] ;
+
+import feature : feature ;
+import toolset ;
+
+# TODO replace with -g3 -gsource-map with optional source-map-base (for node) ?
+feature source_map_support : no yes : propagated ;
+toolset.flags source_map_support SOURCE_MAP_SUPPORT : <source_map_support> ;
+toolset.flags exenode SOURCE_MAP_SUPPORT <source_map_support> ;
+
+rule emcc_flags ( properties * )
+{
+    # local ps = [ property-set.create $(properties) ] ;
+    # local toolset = [ $(ps).get <toolset> ] ;
+    # echo [ $(ps).get <toolset-$(toolset):version> ] ;
+
+    local fs = ;
+
+    # remove -Wno-ctad-maybe-unsupported
+    # for f in [ flags $(properties) ]
+    # {
+    #     if $(f) != <cxxflags>-Wno-ctad-maybe-unsupported
+    #     {
+    #         fs += $(f) ;
+    #     }
+    # }
+
+    local ps = [ property-set.create $(properties) ] ;
+
+    # source-map support
+    local map_support = [ $(ps).get <source_map_support> ] ;
+    if $(map_support) = yes
+    {
+        fs +=
+            <relevant>source_map_support
+            <cxxflags>-g4
+            <cxxflags>--emit-symbol-map
+            <cxxflags>"--source-map-base "$(JS_SOURCE_MAP)
+            <cxxflags>"-s DEMANGLE_SUPPORT=1"
+            <linkflags>"-s DEMANGLE_SUPPORT=1"
+            # <cxxflags>"-s WASM=1"
+        ;
+    }
+
+    return $(fs) ;
+}
+
+# remove -msse3 and transform <conditional>@flags to <conditional>@emcc_flags
+rule filter_flags ( flags * )
+{
+    local jsflags = ;
+    for f in $(flags)
+    {
+        if $(f) != <cxxflags>-msse3
+        {
+            if $(f) != <conditional>@flags
+            {
+                jsflags += $(f) ;
+            }
+            else
+            {
+                jsflags += <conditional>@emcc_flags ;
+            }
+        }
+    }
+
+    return $(jsflags) ;
+}
+
+REDEMPTION_CXXFLAGS = [ filter_flags $(REDEMPTION_CXXFLAGS) ] ;
+
+project redjs
+    : requirements
+
+    <cxx-color-default>always
+
+    $(REDEMPTION_CXXFLAGS)
+    # not necessary, but perhaps in the future
+    # <define>REDEMPTION_NO_HYPERSCAN=1
+    <cxxflags>-Wno-mismatched-tags
+
+    <cxxflags>"-isystem system_include"
+    <include>src
+
+    # https://github.com/kripken/emscripten/blob/master/src/settings.js
+    # DISABLE_EXCEPTION_CATCHING = 0 - generate code to actually catch exceptions
+    # DISABLE_EXCEPTION_CATCHING = 1 - disable exception catching at all
+    # DISABLE_EXCEPTION_CATCHING = 2 - disable exception catching, but enables catching in whitelist
+    # <cxxflags>"-s DISABLE_EXCEPTION_CATCHING=0"
+    <variant>debug:<exception-handling>on/<exception-handling-method>js:<cxxflags>"-s DISABLE_EXCEPTION_CATCHING=0"
+    <variant>release:<exception-handling>on/<exception-handling-method>js:<cxxflags>"-s DISABLE_EXCEPTION_CATCHING=2"
+    <variant>release:<exception-handling>on/<exception-handling-method>js:<cxxflags>"-s EXCEPTION_CATCHING_ALLOWED=['Error']"
+    <variant>release:<exception-handling>on/<exception-handling-method>js:<linkflags>"-s EXCEPTION_CATCHING_ALLOWED=['Error']"
+
+    <variant>debug:<linkflags>"-s STACK_OVERFLOW_CHECK=2"
+
+    # <linkflags>"-s SIMD=1"
+    # <cxxflags>"-s FS_LOG=1"
+    #<linkflags>"-s STACK_OVERFLOW_CHECK=2"
+    # <cxxflags>"-s USE_PTHREADS=0"
+    # <cxxflags>"-s FILESYSTEM=0"
+    <cxxflags>"-s USE_LIBPNG=0"
+    <cxxflags>"-s USE_ZLIB=0"
+    <cxxflags>"-s USE_SDL=0"
+
+    <cxxflags>"-s STRICT=1"
+
+
+    # <cxxflags>"-s ASM_JS=0"
+    # <cxxflags>"-s BINARYEN_TRAP_MODE=js" # clamp, allow
+    # <cxxflags>"-s EMCC_WASM_BACKEND=1"
+
+    # <variant>debug:<cxxflags>"-s DEMANGLE_SUPPORT=1"
+    # <variant>debug:<linkflags>"-s DEMANGLE_SUPPORT=1"
+
+    <variant>release:<cxx-lto>on
+
+    <variant>release:<cxxflags>-fno-rtti
+    <variant>release:<define>EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0
+
+    <variant>release:<cxxflags>-O3
+    # <variant>release:<cxxflags>-Os
+    # <variant>release:<cxxflags>-Oz
+
+    # <variant>release:<cxxflags>"-s AGGRESSIVE_VARIABLE_ELIMINATION=1"
+    # <variant>release:<linkflags>"-s EVAL_CTORS=1"
+    # <variant>release:<cxxflags>"-s ELIMINATE_DUPLICATE_FUNCTIONS=1" # slow
+    # <variant>release:<cxxflags>"-s ASSERTIONS=0"
+    # <variant>release:<cxxflags>"-s ALIASING_FUNCTION_POINTERS=1" #but can break code that compares function pointers across different types.
+    #
+    # # UNSAFE
+    # <variant>release:<cxxflags>"--closure 1"
+    # # UNSAFE
+    # <variant>release:<cxxflags>"--llvm-lto 1" # 2, 3
+    # # UNSAFE
+
+    <cxxflags>-Wno-dollar-in-identifier-extension
+    <cxxflags>-Wno-missing-variable-declarations
+    <cxxflags>-fbracket-depth=512
+    # <cxxflags>-sSTANDALONE_WASM
+
+    : default-build release
+;
+
+
+constant CXXFLAGS_TEST :
+    <include>$(REDEMPTION_TEST_PATH)/includes
+    <define>FIXTURES_PATH='\"$(FIXTURES_PATH)\"'
+    # <cxxflags>"-s NODERAWFS"
+;
+
+obj register_exception.o :
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/impl/register_exception.cpp
+:
+    $(CXXFLAGS_TEST)
+    <cxxflags>-O3
+;
+obj test_framework.o :
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/impl/test_framework.cpp
+:
+    $(CXXFLAGS_TEST)
+    <define>BOOST_TEST_DYN_LINK
+    <cxxflags>-O3
+;
+obj redemption_unit_test.o :
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/redemption_unit_tests.cpp
+:
+    $(CXXFLAGS_TEST)
+    <define>BOOST_TEST_DYN_LINK
+    <cxxflags>-O3
+;
+
+alias unit_test.o :
+    test_framework.o
+    redemption_unit_test.o
+;
+
+constant TEST_DEPENDENCIES :
+    $(CXXFLAGS_TEST)
+    <linkflags>--bind
+    <linkflags>"-s STACK_SIZE=131072"
+    <linkflags>"-s EXIT_RUNTIME=1"
+;
+
+obj log_test.o : $(REDEMPTION_TEST_PATH)/includes/test_only/log_as_logtest.cpp
+    : <include>$(REDEMPTION_TEST_PATH)/includes ;
+obj _log_print.o : $(REDEMPTION_SRC_PATH)/utils/log_as_logprint.cpp ;
+obj _log_level.o : src/redjs/log_level.cpp ;
+alias log_print.o : _log_print.o _log_level.o ;
+
+obj app_path_test.o : src/core/app_path.cpp :
+    <define>SHARE_PATH='\"$(FIXTURES_PATH)\"'
+    <define>CFG_PATH='\"$(REDEMPTION_SYS_PATH)/etc/rdpproxy/\"'
+;
+
+alias app_path_exe.o : app_path_test.o ;
+
+
+actions gen_targets
+{
+    ./tools/gen_targets.sh > targets.jam
+}
+
+explicit targets.jam ;
+make targets.jam : : @gen_targets ;
+
+
+actions exenode
+{
+    [ "$(SOURCE_MAP_SUPPORT)" = yes ] && params='-r source-map-support/register'
+    NODE_PATH="$PWD" node $params "$(>[0]:S=.js)" && : > "$(<)"
+}
+
+rule exe-js ( name : src * : objs * : deps * )
+{
+    exe $(name).em : $(src) $(objs) log_print.o :
+        $(deps)
+        <linkflags>--bind
+        <linkflags>"-s MODULARIZE=1"
+        <linkflags>"-s EXPORT_NAME="$(JS_MODULE_NAME)
+        <linkflags>-sIMPORTED_MEMORY=1
+    ;
+    alias $(name) : $(name).em ;
+}
+
+rule test-run-js ( name : sources + : objs * : deps * )
+{
+    local src = ;
+    local jssources = ;
+
+    for s in $(sources)
+    {
+        if $(src)
+        {
+            jssources += $(s) ;
+        }
+        else
+        {
+            src = $(s) ;
+        }
+    }
+
+    obj $(name).o : $(src) :
+        <include>$(REDEMPTION_TEST_PATH)/includes
+        <include>tests/includes
+        <define>RED_TEST_MODULE=$(name)
+        <define>BOOST_AUTO_TEST_MAIN
+        <define>BOOST_TEST_DYN_LINK
+    ;
+
+    if src/core/error.o in $(objs)
+    {
+        objs += register_exception.o ;
+    }
+
+    exe $(name).em
+        : $(name).o $(objs) unit_test.o log_test.o
+        : $(TEST_DEPENDENCIES) $(deps)
+        ;
+    make $(name) : $(name).em $(jssources) : @exenode ;
+}
+
+actions nothing { }
+
+rule htmljs ( name : objs + : deps * )
+{
+    exehtml $(name).js : $(objs) : $(deps) ;
+    make $(name).html : $(name).js : @nothing ;
+    make $(name).wasm : $(name).js : @nothing ;
+}
+
+
+include targets.jam ;
+
+# echo $(JS_CLIENT_COPY_MODE) ;
+if $(JS_CLIENT_COPY_MODE) = "copy"
+{
+    actions copy_client
+    {
+        cp $(>[1]) $(<) && echo $(>[1])
+    }
+}
+else
+{
+    actions copy_client
+    {
+        rm $(<) 2>/dev/null ||:
+        ln -s "$PWD/"$(>[1]) $(<) && echo $(>[1])
+    }
+}
+
+rule app ( name : src + : deps_for_path : deps_target * )
+{
+    local app_files = ;
+    for file in $(src)
+    {
+        # depends to $(deps_for_path) for a path with toolset
+        make $(file) : src/application/$(file) $(deps_for_path) : @copy_client ;
+        app_files += $(file) ;
+    }
+
+    alias $(name) : $(app_files) $(deps_target) ;
+    explicit $(app_files) $(name) ;
+}
+
+make player_server.py : src/main/player_server.py _dummy : @copy_client ;
+
+app common_js
+    : rdp_graphics.js
+    : _dummy ;
+
+app rdpclient
+    : scancodes.js clipboard.js out_stream.js reversed_layouts.js keyboard.js client.html
+    : common_js
+    : js_client ;
+
+app rdpplayer
+    : player.html
+    : common_js
+    : player_server.py ;
+
+actions cwd
+{
+    echo "------------------------------------------------------------"
+    echo "CWD: $(>[1]:D)"
+    echo "------------------------------------------------------------"
+}
+make cwd : _dummy : @cwd ;
+explicit cwd ;
+
+explicit install_node_modules ;
+make install_node_modules : _dummy : @install_node_modules ;
+actions install_node_modules
+{
+    npm install --local canvas source-map-support
+}

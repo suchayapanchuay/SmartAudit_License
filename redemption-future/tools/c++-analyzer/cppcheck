@@ -1,0 +1,26 @@
+#!/bin/sh
+
+cd "$(dirname "$0")"/../..
+
+# ignored: src/system
+find \
+src/acl \
+src/capture \
+src/core \
+src/front \
+src/gdi \
+src/main \
+src/mod \
+src/transport \
+src/utils \
+projects/redemption_configs/include/autogen \
+projects/redemption_configs/redemption_src \
+src/system/linux \
+-name '*.?pp' \
+ -exec cppcheck -v --enable=all --std=posix --std=c++11 \
+   "$@" \
+   src/keyboard/keylayout.hpp \
+   src/keyboard/keylayouts.hpp \
+   src/keyboard/keymap2.hpp \
+   src/keyboard/keymapSym.hpp \
+   '{}' +

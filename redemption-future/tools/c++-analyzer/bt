@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+gdb -q -batch -ex 'set style enabled on' -ex run -ex bt --args "$@"

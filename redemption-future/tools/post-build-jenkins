@@ -1,0 +1,122 @@
+TODO Extractor
+todo
+
+^TODO:([^:]+):(\d+): *(.*)$
+
+
+import edu.hm.hafner.analysis.Severity
+
+String message = matcher.group(3)
+builder.setFileName(matcher.group(1))
+        .setLineStart(Integer.parseInt(matcher.group(2)))
+        .setSeverity(Severity.WARNING_NORMAL)
+        .setType("message")
+        .setMessage(message)
+
+for (String category : [
+ "ALERT", "SECURITY", "DANGER", "HACK", "ATTENTION",
+ "BUG", "FIXME", "TASK",
+ "CAUTION", "WARNING",
+ "TBD", "DEPRECATED",
+ "PERFORMANCE", "PERF",
+ "TESTING", "TEST",
+ "TODO", "NOTE", "NOTICE"
+]) {
+  if (message.contains(category)) {
+    builder.setCategory(category)
+    return builder.buildOptional();
+  }
+}
+builder.setCategory("TODO")
+return builder.buildOptional()
+
+
+TODO:core/RDP/x224.hpp:307: // BUG blah blah
+
+
+-----------------------------------------------------------
+
+
+Coverage Warning
+coverage
+
+^WARNING[:]\s+(LOW COVERAGE|NO COVERAGE)\s+([^,]+),\d+[:](\d+)\s(.*)$
+
+
+import edu.hm.hafner.analysis.Severity
+
+builder.setFileName(matcher.group(2))
+        .setLineStart(Integer.parseInt(matcher.group(3)))
+        .setSeverity(Severity.WARNING_NORMAL)
+        .setCategory(matcher.group(1))
+        .setMessage(matcher.group(4))
+
+return builder.buildOptional();
+
+
+WARNING: NO COVERAGE src/core/RDP/RDPDrawable.hpp,3558:145 [void draw(RDPColCache   const & /*cmd*/) override;] 0/1
+
+
+-----------------------------------------------------------
+
+
+
+Compiler Warnings
+warnings
+
+^([^:]+):(\d+):\d+: (warning|runtime error): (?:(.*) \[([^\]]+)\]|(.*))$
+
+
+import edu.hm.hafner.analysis.Severity
+
+String type = matcher.group(3)
+String message = matcher.group(4)
+String category = matcher.group(5)
+
+if (!message) {
+  message = matcher.group(6)
+  if (type == "warning") {
+    category = "unspecified"
+  }
+  else {
+    category = "runtime error"
+  }
+}
+
+builder.setFileName(matcher.group(1))
+        .setLineStart(Integer.parseInt(matcher.group(2)))
+        .setSeverity(Severity.WARNING_NORMAL)
+        .setCategory(category)
+        .setType(type)
+        .setMessage(message)
+
+return builder.buildOptional();
+
+
+test.cpp:2:11: warning: ‘i’ is used uninitialized in this function [-Wuninitialized]
+
+
+-----------------------------------------------------------
+
+
+Valgrind Errors
+valgrind
+
+^valgrind error: ([^ ]+): (.*)$
+
+
+import edu.hm.hafner.analysis.Severity
+
+String fileName = matcher.group(1) + ".exe"
+String category = "valgrind-error"
+String message = matcher.group(2)
+
+builder.setFileName(fileName)
+        .setLineStart(0)
+        .setSeverity(Severity.WARNING_HIGH)
+        .setCategory(category)
+        .setMessage(message)
+
+return builder.buildOptional();
+
+valgrind error: ./a.out: ERROR SUMMARY: 1 errors from 1 contexts (suppressed: 0 from 0)

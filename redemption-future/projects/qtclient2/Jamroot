@@ -1,0 +1,148 @@
+REDEMPTION_PUBLIC_PATH ?= [ SHELL "readlink -n -f ../.." ] ;
+
+ECHO "redemption-src: $(REDEMPTION_PUBLIC_PATH)" ;
+
+JAM_INCLUDE_PATH ?= $(REDEMPTION_PUBLIC_PATH)/jam ;
+REDEMPTION_INCLUDE_PATH ?= $(REDEMPTION_PUBLIC_PATH)/include ;
+REDEMPTION_MODULES_SRC_PATH ?= $(REDEMPTION_PUBLIC_PATH)/modules ;
+
+include $(JAM_INCLUDE_PATH)/redemption-config.jam ;
+
+EXE_DEPENDENCIES +=
+    <define>CLIENT_REDEMPTION_MAIN_PATH='\"$(CLIENT_REDEMPTION_MAIN_PATH)\"'
+    <define>REDEMPTION_QT_VERSION=$(qtversion)
+    <library>log_as_logprint.o
+    # TODO $(BOOST_STACKTRACE_LINKFLAGS)
+;
+constant NO_FFMPEG : 1 ;
+
+include $(JAM_INCLUDE_PATH)/cxxflags.jam ;
+include $(JAM_INCLUDE_PATH)/defines.jam ;
+include $(JAM_INCLUDE_PATH)/includes.jam ;
+include $(JAM_INCLUDE_PATH)/sanitizer.jam ;
+include $(JAM_INCLUDE_PATH)/libs.jam ;
+
+# qt5: bjam -sqt=5
+# qt6: bjam -sqt=6
+
+# select best Qt version
+## @{
+import os ;
+local qtversion = [ os.environ qt ] ;
+
+if ! $(qtversion)
+{
+    qtversion = [ os.environ qtversion ] ;
+
+    if ! $(qtversion)
+    {
+        qtversion = [ os.environ KDE_SESSION_VERSION ] ;
+        if $(qtversion)
+        {
+            echo "KDE_SESSION_VERSION=$(qtversion) found. Use Qt$(qtversion)." ;
+        }
+        else
+        {
+            qtversion = 5 ;
+            echo "Assume Qt$(qtversion). (bjam -s qt=5)" ;
+        }
+    }
+}
+
+if $(qtversion) != 5 && $(qtversion) != 6
+{
+    echo "Unknown Qt$(qtversion)." ;
+    qtversion = ;
+    exit "Please set a valid Qt version (5 or 6) with `bjam -s qt=5`." ;
+}
+## @}
+
+# TODO search include qt5 directory
+constant QT_INCLUDE : [ setvar QT_INCLUDE : /usr/include/x86_64-linux-gnu/qt$(qtversion) ] ;
+# TODO search include phonon directory
+constant QT_PHONON_INCLUDE : [ setvar QT_PHONON_INCLUDE : /usr/include/phonon4qt$(qtversion)/KDE ] ;
+constant QT_LIB_PATH : [ setvar QT_LIB_PATH : "" ] ;
+constant QT_TOOLS_PATH : [ setvar QT_TOOLS_PATH : /usr/lib/x86_64-linux-gnu/qt$(qtversion) ] ;
+
+
+constant SHELL_PWD : $(REDEMPTION_PUBLIC_PATH)/projects/qtclient ; # rule location
+constant CLIENT_REDEMPTION_MAIN_PATH : [ setvar CLIENT_REDEMPTION_MAIN_PATH : $(SHELL_PWD) ] ;
+
+# TODO remove?
+# for `Q_UNUSED(_a);` within moc_*.cpp
+REDEMPTION_CXXFLAGS += <toolset>clang:<cxxflags>-Wno-extra-semi-stmt ;
+
+project qtclient
+    : requirements
+
+    <conditional>@flags
+
+    $(REDEMPTION_CXXFLAGS)
+    $(REDEMPTION_FFMPEG_FLAGS)
+    $(REDEMPTION_BOOST_STACKTRACE_FLAGS)
+    $(BOOST_STACKTRACE_CXXFLAGS)
+
+    # extract name / bit on enum
+    <include>$(REDEMPTION_CONFIG_PATH)/autogen/src/include
+
+    # <cxxflags>-fPIC
+    <define>QT_NO_KEYWORDS
+    <define>QT_DISABLE_DEPRECATED_BEFORE=0x051500
+
+    # TODO remove
+    <cxxflags>-isystem$(QT_INCLUDE)
+    <cxxflags>-isystem$(QT_PHONON_INCLUDE)
+
+    <include>src
+
+    <toolset>gcc:<cxxflags>-Wno-missing-include-dirs
+
+   : default-build release
+;
+
+include $(JAM_INCLUDE_PATH)/testing-coverage.jam ;
+
+using qt$(qtversion)
+    : $(QT_TOOLS_PATH)
+    : $(qtversion).0
+    :
+    :
+    :
+    :
+    : $(QT_INCLUDE)
+    : $(QT_LIB_PATH)
+    ;
+
+alias libQtCore : /qt$(qtversion)//QtCore ;
+alias libQtGui : /qt$(qtversion)//QtGui libQtCore ;
+alias libQtWidgets : /qt$(qtversion)//QtWidgets libQtGui ;
+
+obj app_path_exe.o : $(REDEMPTION_SRC_PATH)/core/app_path.cpp :
+    <conditional>@defines
+    <define>SHARE_PATH='\"$(SHARE_PREFIX)\"'
+    <define>CFG_PATH='\"$(REDEMPTION_SYS_PATH)$(CLIENT_REDEMPTION_MAIN_PATH)\"'
+;
+
+obj log_as_logprint.o : $(REDEMPTION_SRC_PATH)/utils/log_as_logprint.cpp ;
+
+
+include targets.jam ;
+
+actions gen_targets
+{
+    ./tools/gen_targets.sh > targets.jam
+}
+
+explicit targets.jam ;
+make targets.jam : : @gen_targets ;
+
+explicit install instexe install-bin ;
+
+alias instexe : install-bin ;
+alias install : install-bin ;
+
+install install-bin
+    : qtclient2
+    : <install-type>EXE <install-dependencies>on
+    : <location>$(INSTALLDIR)/usr/local/bin
+    ;

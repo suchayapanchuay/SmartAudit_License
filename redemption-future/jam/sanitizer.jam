@@ -1,0 +1,1 @@
+variant san : debug : <variant>debug <cxx-stl-debug-default>allow-broken-abi <cxx-sanitizers-default>on ;

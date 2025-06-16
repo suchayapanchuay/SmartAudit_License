@@ -1,0 +1,16 @@
+for f in
+    $(REDEMPTION_SRC_PATH)
+    $(REDEMPTION_INCLUDE_PATH)
+    $(SYSTEM_SRC_PATH)
+    $(OCR1_INCLUDE_PATH)
+    $(PPOCR_INCLUDES_PATH)
+## configs @{
+    $(REDEMPTION_CONFIG_PATH)/redemption_src
+    $(REDEMPTION_CONFIG_AUTOGEN_PATH)
+## @}
+{
+    if $(f) != ""
+    {
+        REDEMPTION_CXXFLAGS += <include>$(f) ;
+    }
+}

@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# https://github.com/facebook/infer
+
+# --skip-analysis-in-path=tests/includes/fixtures/ \
+# --skip-analysis-in-path=tests/mod/vnc/vnc_zrle_slice1_0_34.hpp \
+# --skip-analysis-in-path=tests/mod/vnc/encoder/vnc_zrle_slice1_0_34.hpp \
+# --skip-analysis-in-path=tests/core/RDP/caches/test_bmpcache.cpp \
+# --skip-analysis-in-path=tests/mod/vnc/encoder/test_zrle.cpp \
+# --skip-analysis-in-path=tests/utils/test_bitmap.cpp \
+
+${INFER:=infer} \
+--skip-analysis-in-path=tests/ \
+--skip-analysis-in-path=src/keyboard/keylayouts.cpp \
+--enable-issue-type=BUFFER_OVERRUN_L5,BUFFER_OVERRUN_U5,CLASS_CAST_EXCEPTION,CONDITION_ALWAYS_FALSE,CONDITION_ALWAYS_TRUE,CONSTANT_ADDRESS_DEREFERENCE,DANGLING_POINTER_DEREFERENCE,DANGLING_POINTER_DEREFERENCE_MAYBE,DIVIDE_BY_ZERO,GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL,INFINITE_AUTORELEASEPOOL_SIZE,INFINITE_EXECUTION_TIME,INTEGER_OVERFLOW_L5,INTEGER_OVERFLOW_U5,NULL_TEST_AFTER_DEREFERENCE,PULSE_UNINITIALIZED_VALUE,RETURN_VALUE_IGNORED,STACK_VARIABLE_ADDRESS_ESCAPE,UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION,UNTRUSTED_BUFFER_ACCESS,UNTRUSTED_HEAP_ALLOCATION \
+--force-integration make \
+-- \
+bjam --build-dir=${BUILD_DIR:=build} exe -a "$@"

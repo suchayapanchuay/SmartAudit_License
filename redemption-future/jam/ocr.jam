@@ -1,0 +1,59 @@
+obj ocr.o : $(REDEMPTION_SRC_PATH)/capture/ocr/locale/latin_to_cyrillic.cpp ;
+
+alias ocr : ocr.o ppocr ;
+
+## ppocr {
+
+rule create_ppocr_rule ( srcs * )
+{
+    local targets ;
+    local objs ;
+    for f in $(srcs)
+    {
+        local path = $(f:P) ;
+        local target = ppocr_$(path:B)_$(f:B).o ;
+        obj $(target) : $(f) ;
+        alias $(f).o : $(target) ;
+        targets += $(target) ;
+        objs += $(f).o ;
+    }
+
+    alias ppocr : $(targets) ;
+    explicit ocr.o ocr ppocr $(targets) $(objs) ;
+}
+
+create_ppocr_rule
+    $(PPOCR_SRC_PATH)/ppocr/box_char/box.cpp
+    $(PPOCR_SRC_PATH)/ppocr/box_char/make_box_character.cpp
+    $(PPOCR_SRC_PATH)/ppocr/image/coordinate.cpp
+    $(PPOCR_SRC_PATH)/ppocr/image/image.cpp
+    $(PPOCR_SRC_PATH)/ppocr/image/image_from_file.cpp
+    $(PPOCR_SRC_PATH)/ppocr/loader2/glyphs_loader.cpp
+    $(PPOCR_SRC_PATH)/ppocr/loader2/image_io.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/data_indexes_by_words.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/disambiguous_with_dict.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/filter_by_font.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/filter_by_lines.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/glyphs.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/replacement.cpp
+    $(PPOCR_SRC_PATH)/ppocr/ocr2/word_lines.cpp
+    $(PPOCR_SRC_PATH)/ppocr/spell/dictionary.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/alternations.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/density.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/dvdirection.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/dvdirection2.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/dvgravity.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/dvgravity2.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/dzdensity.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/hbar.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/hdirection.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/hdirection2.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/hgravity.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/hgravity2.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/proportionality.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/proportionality_zone.cpp
+    $(PPOCR_SRC_PATH)/ppocr/strategies/zone.cpp
+    $(PPOCR_SRC_PATH)/ppocr/utils/image_compare.cpp
+;
+
+## } ppocr

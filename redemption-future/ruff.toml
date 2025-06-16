@@ -1,0 +1,70 @@
+exclude = [
+    "__pycache__",
+]
+
+target-version = "py311"
+
+[lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = [
+    # ruff linter | sed -E 's#^\s*([A-Za-z0-9/]+).*#\1#;s#/#", "#;s/^/"/;s/$/",/;'
+
+    # NO!
+    # "D",  # pydocstyle: undocumented-*, blank-line-before-class, etc
+    # "C90",  # complexity
+    # "SLF",  # SLF001 	private-member-access 	Private member accessed: {access}
+    # "ERA",  # eradicate ; ex. ERA001: Found commented-out code
+    # "PTH",  # os.path.xxx() should be replaced by Path.xxx()
+    # "YTT",  # flake8-2020 ; sys-version-*
+    # "CPY",  # flake8-copyright
+
+    "ASYNC", "FA",  "SLOT", "TD",  "FIX", "FLY", "AIR", "PERF", "FURB", "LOG",
+    "E", "F", "W", "I", "N", "ANN", "S", "BLE", "FBT", "B", "A", "COM", "C4",
+    "DTZ", "EM", "EXE", "RUF", "ISC", "ICN", "G", "INP", "PIE", "PYI", "PT",
+    "RSE", "RET", "SIM", "TID", "TCH", "INT", "ARG", "PD", "PGH", "PL", "TRY",
+    "NPY", "T20",
+]
+
+fixable = [
+    "E301",  # blank-line-between-methods
+    "E302",  # blank-lines-top-level
+    "E303",  # too-many-blank-lines
+    "E305",  # blank-lines-after-function-or-class
+    "E306",  # blank-lines-before-nested-definition
+    "E502",  # redundant-backslash
+    "F541",  # f-string-missing-placeholders
+    "FURB110",  # if-exp-instead-of-or-operator
+    "FURB118",  # reimplemented-operator
+    "PIE808",  # unnecessary-range-start
+    "PLR1730",  # if-stmt-min-max
+    "PLR5501",  # collapsible-else-if
+    "RUF021",  # parenthesize-chained-operators
+    "RUF023",  # unsorted-dunder-slots
+    "C400",  # unnecessary-generator-list
+    "C401",  # unnecessary-generator-set
+]
+
+ignore = [
+    "COM812",  # Trailing comma missing
+    "E226",  # Missing whitespace around arithmetic operator
+    "E501",  # Line too long
+    "E741",  # ambiguous-variable-name
+    "FBT001",  # Boolean positional arg in function definition
+    "FBT002",  # Boolean default positional argument in function definition
+    "FURB101",  # `open` and `read` should be replaced by `Path(filename).read_text(encoding='utf-8')`
+    "FURB103",  # `open` and `write` should be replaced by `Path(temporary_ini_filename).write_text(new_content, encoding='utf-8')`
+    "I001",  # Import block is un-sorted or un-formatted
+    "INP001",  # implicit-namespace-package
+    "PLR0912",  # Too many branches ({branches} > {max_branches})
+    "PLR0913",  # Too many arguments to function call
+    "PLR0917",  # Too many positional arguments
+    "PLR2004",  # Magic value used in comparison, consider replacing XXX with a constant variable
+    "S101",  # Use of assert detected
+    "SIM300",  # yoda-conditions
+    "T201", "T203",  # print, pprint
+    "TD002",  # Missing author in TODO
+    "TD003",  # Missing issue link on the line following this TODO
+    "TD004",  # Missing colon in TODO
+]

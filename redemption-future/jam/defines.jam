@@ -1,0 +1,122 @@
+import os ;
+
+# Returns environment value if it exists or default otherwise.
+# Allow us to customize install path with shell variables like $PREFIX...
+# (this is bad practice and should be replaced by a site configuration file)
+rule setvar ( env : default )
+{
+    if [ os.environ $(env) ]
+    {
+        return [ os.environ $(env) ] ;
+    }
+    else
+    {
+        return $(default) ;
+    }
+}
+
+if [ os.environ TARGET ]  = "arm" {
+    REDEMPTION_CXXFLAGS += <define>REDEMPTION_NO_SSE ;
+    constant NO_HYPERSCAN : 1 ;
+}
+else {
+    REDEMPTION_CXXFLAGS += <cxxflags>-msse3 ;
+    constant NO_HYPERSCAN : [ setvar NO_HYPERSCAN : 0 ] ; # disable libhs. /!\ Test of pattern will fails
+}
+
+constant MUSL_LIBC : [ setvar MUSL_LIBC : 0 ] ;
+
+if $(MUSL_LIBC) != 0
+{
+    REDEMPTION_CXXFLAGS +=
+        <define>_FILE_OFFSET_BITS=64
+        <define>_LARGEFILE64_SOURCE
+    ;
+}
+
+INSTALLDIR_DEFAULT ?= "" ;
+PREFIX_DEFAULT ?= /usr/local ;
+ETC_PREFIX_DEFAULT ?= /etc/rdpproxy ;
+VAR_PREFIX_DEFAULT ?= /var/rdpproxy ;
+SESSION_PREFIX_DEFAULT ?= /var/lib/redemption ;
+
+
+constant INSTALLDIR : [ setvar DESTDIR : $(INSTALLDIR_DEFAULT) ] ;
+constant PREFIX : [ setvar PREFIX : $(PREFIX_DEFAULT) ] ;
+constant ETC_PREFIX : [ setvar ETC_PREFIX : $(ETC_PREFIX_DEFAULT) ] ;
+constant VAR_PREFIX : [ setvar VAR_PREFIX : $(VAR_PREFIX_DEFAULT) ] ;
+constant SESSION_PREFIX : [ setvar SESSION_PREFIX : $(SESSION_PREFIX_DEFAULT) ] ;
+
+
+RECORD_PREFIX_DEFAULT ?= $(VAR_PREFIX)/recorded ;
+
+constant RECORD_PREFIX : [ setvar RECORD_PREFIX : $(RECORD_PREFIX_DEFAULT) ] ;
+
+
+BIN_PREFIX_DEFAULT ?= $(PREFIX)/bin ;
+LIB_PREFIX_DEFAULT ?= $(PREFIX)/lib ;
+SHARE_PREFIX_DEFAULT ?= $(PREFIX)/share/rdpproxy ;
+RECORD_PATH_DEFAULT ?= $(RECORD_PREFIX)/rdp ;
+RECORD_TMP_PATH_DEFAULT ?= $(VAR_PREFIX)/tmp ;
+CERT_PREFIX_DEFAULT ?= $(ETC_PREFIX)/cert ;
+HASH_PATH_DEFAULT ?= $(VAR_PREFIX)/hash ;
+PERSISTENT_PATH_DEFAULT ?= $(SESSION_PREFIX)/cache ;
+SESSION_DATA_PATH_DEFAULT ?= $(SESSION_PREFIX)/session ;
+DRIVE_REDIRECTION_PATH_DEFAULT ?= $(VAR_PREFIX)/drive_redirection ;
+PID_PATH_DEFAULT ?= /var/run ;
+
+constant BIN_PREFIX : [ setvar BIN_PREFIX : $(BIN_PREFIX_DEFAULT) ] ;
+constant LIB_PREFIX : [ setvar LIB_PREFIX : $(LIB_PREFIX_DEFAULT) ] ;
+constant SHARE_PREFIX : [ setvar SHARE_PREFIX : $(SHARE_PREFIX_DEFAULT) ] ;
+constant RECORD_PATH : [ setvar RECORD_PATH : $(RECORD_PATH_DEFAULT) ] ;
+constant RECORD_TMP_PATH : [ setvar RECORD_TMP_PATH : $(RECORD_TMP_PATH_DEFAULT) ] ;
+constant CERT_PREFIX : [ setvar CERT_PREFIX : $(CERT_PREFIX_DEFAULT) ] ;
+constant HASH_PATH : [ setvar HASH_PATH : $(HASH_PATH_DEFAULT) ] ;
+constant PERSISTENT_PATH : [ setvar PERSISTENT_PATH : $(PERSISTENT_PATH_DEFAULT) ] ;
+constant SESSION_DATA_PATH : [ setvar SESSION_DATA_PATH : $(SESSION_DATA_PATH_DEFAULT) ] ;
+constant DRIVE_REDIRECTION_PATH : [ setvar DRIVE_REDIRECTION_PATH : $(DRIVE_REDIRECTION_PATH_DEFAULT) ] ;
+constant PID_PATH : [ setvar PID_PATH : $(PID_PATH_DEFAULT) ] ;
+
+
+constant COVERAGE_PREFIX : [ setvar COVERAGE_PREFIX : "" ] ;
+
+rule defines ( properties * )
+{
+    local defs ;
+    defs += <define>RECORD_PATH='\"$(RECORD_PATH)\"' ;
+    defs += <define>RECORD_TMP_PATH='\"$(RECORD_TMP_PATH)\"' ;
+    defs += <define>VIDEO_PATH='\"$(RECORD_TMP_PATH)\"' ;
+    defs += <define>OCR_PATH='\"$(RECORD_TMP_PATH)\"' ;
+    defs += <define>PNG_PATH='\"$(RECORD_TMP_PATH)\"' ;
+    defs += <define>WRM_PATH='\"$(RECORD_PATH)\"' ;
+    defs += <define>HASH_PATH='\"$(HASH_PATH)\"' ;
+    defs += <define>LICENSE_PATH='\"$(CERT_PREFIX)/rdplicense\"' ;
+    defs += <define>CERTIF_PATH='\"$(CERT_PREFIX)\"' ;
+    defs += <define>PERSISTENT_PATH='\"$(PERSISTENT_PATH)\"' ;
+    defs += <define>SESSION_DATA_PATH='\"$(SESSION_DATA_PATH)\"' ;
+    defs += <define>DRIVE_REDIRECTION_PATH='\"$(DRIVE_REDIRECTION_PATH)\"' ;
+    defs += <define>PID_PATH='\"$(PID_PATH)\"' ;
+    return $(defs) ;
+}
+
+## ffmpeg {
+# empty for default system header
+_FFMPEG_INC_PATH ?= "" ;
+# empty for default system library
+_FFMPEG_LIB_PATH ?= "" ;
+_FFMPEG_LINK_MODE ?= "shared" ;
+## }
+
+constant FFMPEG_INC_PATH : [ setvar FFMPEG_INC_PATH : $(_FFMPEG_INC_PATH) ] ;
+constant FFMPEG_LIB_PATH : [ setvar FFMPEG_LIB_PATH : $(_FFMPEG_LIB_PATH) ] ; # /!\ without `/` terminal
+constant FFMPEG_LINK_MODE : [ setvar FFMPEG_LINK_MODE : $(_FFMPEG_LINK_MODE) ] ; # static or shared
+constant NO_FFMPEG : [ setvar NO_FFMPEG : 0 ] ;
+
+constant BOOST_STACKTRACE : [ setvar BOOST_STACKTRACE : 0 ] ; # `-sBOOST_STACKTRACE=1` (for debug and san mode) require libboost_stacktrace_backtrace (apt install libboost-stacktrace-dev). Other values are addr2line (libboost_stacktrace_addr2line), basic (libboost_stacktrace_basic) and static_backtrace (libbacktrace). Use REDEMPTION_FILTER_ERROR shell variable for disable backtrace of specific error (see `src/core/error.hpp`). example: `export REDEMPTION_FILTER_ERROR=ERR_TRANSPORT_NO_MORE_DATA,ERR_SEC`.
+
+constant FAST_CHECK : [ setvar FAST_CHECK : 0 ] ; # fast RED_CHECK(...) and co
+
+constant ENABLE_COVERAGE : [ setvar coverage : off ] ; # bjam -s coverage=on debug test_rect.coverage
+
+constant FORCE_LOGPRINT : [ setvar FORCE_LOGPRINT : 0 ] ; # use log_as_logprint.cpp rather that syslog()
+constant TIMESTAMP_WITH_LOGPRINT : [ setvar TIMESTAMP_WITH_LOGPRINT : 1 ] ; # add date with log_as_logprint.cpp

@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+
+if [[ "$1" = '-h' || "$1" = '--help' ]]; then
+  echo "$0 [-fix] [files...]"
+  exit 1
+fi
+
+if (( $# != 0 )); then
+  sources=("$@")
+else
+  unity_build_base="${TMPDIR_TEST:-${TMPDIR:-/tmp}}"
+  cpp_unity1="$unity_build_base/unity_build1.cpp"
+  cpp_unity2="$unity_build_base/unity_build2.cpp"
+
+  nolint='bugprone-suspicious-include'
+  nolintbegin="// NOLINTBEGIN($nolint)"
+  nolintend="// NOLINTEND($nolint)"
+
+  {
+    echo '#define REDEMPTION_NO_FFMPEG 1'
+    echo "$nolintbegin"
+    find src/ -name '*.cpp' \
+      -a \( -path 'src/main/headlessclient.cpp' -o -not -path 'src/main/*' \) \
+      -a -not -path 'src/utils/crypto/*' \
+      -a -not -path 'src/keyboard/keylayouts.cpp' \
+      -a -not -path 'src/capture/capture.cpp' \
+      -a -not -path 'src/capture/video_capture.cpp' \
+      -a -not -path 'src/lib/do_recorder.cpp' \
+      -a -not -path 'src/utils/log_as_logprint.cpp' \
+    | sed -E 's/^src\/(.*)/#include "\1"/'
+    echo "$nolintend"
+  } > "$cpp_unity1"
+
+  echo '
+    '"$nolintbegin"'
+    #include "capture/video_capture.cpp"
+    #include "lib/do_recorder.cpp"
+    #include "main/mwrm3_editor.cpp"
+    #include "utils/log_as_logprint.cpp"
+    '"$nolintend"'
+  ' > "$cpp_unity2"
+
+  sources=(
+    "$cpp_unity1"
+    "$cpp_unity2"
+    $(find src/main -name '*.cpp' \
+      -a -not -path 'src/main/mwrm3_editor.cpp' \
+      -a -not -path 'src/main/headlessclient.cpp')
+  )
+fi
+
+# cppcoreguidelines-pro-type-member-init / hicpp-member-init false positive...
+fix=
+if [[ "$1" = '-fix' ]]; then
+  fix=-fix
+  shift
+  checkers='
+llvm-namespace-comment,
+'
+else
+  checkers='*,
+-altera-id-dependent-backward-branch,
+-altera-struct-pack-align,
+-altera-unroll-loops,
+-android-cloexec-accept,
+-android-cloexec-fopen,
+-android-cloexec-open,
+-bugprone-easily-swappable-parameters,
+-bugprone-exception-escape,
+-bugprone-implicit-widening-of-multiplication-result,
+-bugprone-macro-parentheses,
+-bugprone-non-zero-enum-to-bool-conversion,
+-bugprone-unhandled-self-assignment,
+-cert-dcl03-c,
+-cert-dcl21-cpp,
+-cert-err09-cpp,
+-cert-err52-cpp,
+-cert-err58-cpp,
+-cert-err61-cpp,
+-clang-diagnostic-deprecated-declarations,
+-concurrency-mt-unsafe,
+-cppcoreguidelines-avoid-c-arrays,
+-cppcoreguidelines-avoid-const-or-ref-data-members,
+-cppcoreguidelines-avoid-do-while,
+-cppcoreguidelines-avoid-goto,
+-cppcoreguidelines-avoid-magic-numbers,
+-cppcoreguidelines-explicit-virtual-functions,
+-cppcoreguidelines-init-variables,
+-cppcoreguidelines-macro-usage,
+-cppcoreguidelines-non-private-member-variables-in-classes,
+-cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+-cppcoreguidelines-pro-bounds-constant-array-index,
+-cppcoreguidelines-pro-bounds-pointer-arithmetic,
+-cppcoreguidelines-pro-type-member-init,
+-cppcoreguidelines-pro-type-union-access,
+-cppcoreguidelines-pro-type-vararg,
+-cppcoreguidelines-special-member-functions,
+-fuchsia-default-arguments,
+-fuchsia-default-arguments-declarations,
+-fuchsia-default-arguments-calls,
+-fuchsia-multiple-inheritance,
+-fuchsia-overloaded-operator,
+-fuchsia-statically-constructed-objects,
+-fuchsia-trailing-return,
+-google-build-using-namespace,
+-google-explicit-constructor,
+-google-readability-namespace-comments,
+-google-readability-todo,
+-google-runtime-int,
+-google-runtime-references,
+-hicpp-avoid-c-arrays,
+-hicpp-avoid-goto,
+-hicpp-braces-around-statements,
+-hicpp-exception-baseclass,
+-hicpp-explicit-conversions,
+-hicpp-function-size,
+-hicpp-member-init,
+-hicpp-multiway-paths-covered,
+-hicpp-no-array-decay,
+-hicpp-no-assembler,
+-hicpp-noexcept-move,
+-hicpp-signed-bitwise,
+-hicpp-special-member-functions,
+-hicpp-static-assert,
+-hicpp-uppercase-literal-suffix,
+-hicpp-use-auto,
+-hicpp-use-equals-default,
+-hicpp-use-equals-delete,
+-hicpp-use-override,
+-hicpp-vararg,
+-llvm-header-guard,
+-llvm-include-order,
+-llvm-qualified-auto,
+-llvmlibc-callee-namespace,
+-llvmlibc-implementation-in-namespace,
+-llvmlibc-inline-function-decl,
+-llvmlibc-restrict-system-libc-headers,
+-misc-const-correctness,
+-misc-macro-parentheses,
+-misc-non-private-member-variables-in-classes,
+-misc-static-assert,
+-misc-unused-parameters,
+-modernize-avoid-c-arrays,
+-modernize-concat-nested-namespaces,
+-modernize-raw-string-literal,
+-modernize-return-braced-init-list,
+-modernize-use-auto,
+-modernize-use-nodiscard,
+-modernize-use-trailing-return-type,
+-readability-avoid-const-params-in-decls,
+-readability-braces-around-statements,
+-readability-function-cognitive-complexity,
+-readability-identifier-length,
+-readability-implicit-bool-conversion,
+-readability-magic-numbers,
+-readability-non-const-parameter,
+-readability-qualified-auto,
+-readability-redundant-access-specifiers,
+-readability-static-accessed-through-instance,
+-readability-static-definition-in-anonymous-namespace,
+'
+fi
+
+${CLANG_TIDY:=clang-tidy} $fix -checks="$checkers" \
+-config='{CheckOptions: [
+{key: llvm-namespace-comment.ShortNamespaceLines, value: 10},
+{key: readability-uppercase-literal-suffix.NewSuffixes, value: L;LL},
+{key: modernize-use-override.IgnoreDestructors, value: true}
+]}' \
+-header-filter='.*' "${sources[@]}" \
+-- \
+-fsyntax-only \
+-std=c++2a \
+-Wno-macro-redefined \
+-fbracket-depth=512 \
+-I'include' \
+-I'projects/ppocr' \
+-I'projects/ocr1/include' \
+-I'projects/redemption_configs/autogen/include' \
+-I'projects/redemption_configs/redemption_src' \
+-I'src' \
+-I'src/system/linux' \
+-I'tests/includes/' \
+-DZLIB_CONST \
+-DFIXTURES_PATH='"mypath" /*NOLINT*/' \
+-DRECORD_PATH='"mypath" /*NOLINT*/' \
+-DRECORD_TMP_PATH='"mypath" /*NOLINT*/' \
+-DVIDEO_PATH='"mypath" /*NOLINT*/' \
+-DOCR_PATH='"mypath" /*NOLINT*/' \
+-DPNG_PATH='"mypath" /*NOLINT*/' \
+-DWRM_PATH='"mypath" /*NOLINT*/' \
+-DHASH_PATH='"mypath" /*NOLINT*/' \
+-DLICENSE_PATH='"mypath" /*NOLINT*/' \
+-DCERTIF_PATH='"mypath" /*NOLINT*/' \
+-DPERSISTENT_PATH='"mypath" /*NOLINT*/' \
+-DDRIVE_REDIRECTION_PATH='"mypath" /*NOLINT*/' \
+-DPID_PATH='"mypath" /*NOLINT*/' \
+-DSHARE_PATH='"mypath" /*NOLINT*/' \
+-DCFG_PATH='"mypath" /*NOLINT*/' \
+-DSESSION_DATA_PATH='"mypath" /*NOLINT*/' \
+-DREDEMPTION_DECL_LOG_TEST \
+-DBOOST_AUTO_TEST_MAIN \
+-DBOOST_TEST_DYN_LINK \
+-DCLANG_TIDY
+
+# highlighting
+# sed "s#`pwd`/##" | colout '(^[pst][^/]+/[^:]+):([^:]+:[^:]+): (error)?(warning)?(note)?:([^[]+)(\[.*)?' c y r,o m,o c,o \#eee,o w

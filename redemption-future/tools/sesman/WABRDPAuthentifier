@@ -1,0 +1,110 @@
+#!/usr/bin/env -S python3 -O
+#
+# Copyright (c) 2011 WALLIX, SAS. All rights reserved.
+# Licensed computer software. Property of WALLIX.
+# Product Name: Wallix AdminBastion
+# Author(s) : Christophe Grosjean <cgr@wallix.com>
+# Id: $Id$
+# URL: $URL$
+# Module description:
+# Compile with:
+#
+"""
+WAB RDP Authentifier server launcher
+"""
+
+import socket
+import sys
+
+#syslog = type(sys)('syslog')
+#syslog.openlog = lambda name: None  # type: ignore
+#syslog.LOG_INFO = 0  # type: ignore
+#syslog.syslog = lambda lvl, text: print('\x1b[1m', text, '\x1b[0m', sep='')  # type: ignore
+#sys.modules['syslog'] = syslog
+
+from socket import fromfd
+from socket import AF_UNIX
+from socket import AF_INET
+from socket import SOCK_STREAM
+from socket import SOL_SOCKET
+from socket import SO_REUSEADDR
+from select import select
+import os
+import signal
+
+path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(f'{path}')
+sys.path.append(f'{path}/wallix_imports')
+from wallix.logger import Logger
+
+socket_path = '/tmp/redemption-sesman-sock'
+# # rdpproxy -c |& sed -E '/recorded\/rdp/!d;s#[^"]+"([^"]+)".*#\1#;s#recorded/rdp##;q'
+# DEFAULT_LOCAL_TRACE_PATH_RDP = '/var/wab/recorded/rdp/'
+# try: os.makedirs(DEFAULT_LOCAL_TRACE_PATH_RDP)
+# except: pass
+# os.environ['LOCAL_TRACE_PATH_RDP'] = DEFAULT_LOCAL_TRACE_PATH_RDP
+
+
+def standalone():
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+
+    try:
+        os.remove(socket_path)
+    except:
+        pass
+    # create socket from bounded port
+    s = socket.socket(AF_UNIX, SOCK_STREAM)
+    s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    s.bind(socket_path)
+    s.listen(100)
+
+    # create alternative socket for watchdog
+    sw = socket.socket(AF_INET, SOCK_STREAM)
+    sw.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    sw.bind(('127.0.0.1', 3351))
+    sw.listen(100)
+
+    try:
+        while True:
+            rfds, wfds, xfds = select([s, sw], [], [], None)
+            for sck in rfds:
+                client_socket, client_addr = sck.accept()
+
+                # rdpproxy
+                if sck == s:
+                    child_pid = os.fork()
+                    if child_pid == 0:
+                        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                        sck.close()
+
+                        from sesmanworker import Sesman
+                        from sesmanworker.sesman import AuthentifierSocketClosed
+                        Sesman.SOCK_PATH_DIR = '/tmp/'
+
+                        server = Sesman(client_socket, client_addr)
+
+                        try:
+                            server.start()
+                        except AuthentifierSocketClosed as e:
+                            Logger().info("WABRDPAuthentifier socket closed")
+                        sys.exit(0)
+                    else:
+                        client_socket.close()
+                        # os.waitpid(child_pid, 0)
+
+                # watchdog
+                elif sck == sw:
+                    client_socket.close()
+
+    except KeyboardInterrupt:
+        if client_socket:
+            client_socket.close()
+        sys.exit(1)
+    except socket.error:
+        pass
+    except Exception as e:
+        Logger().exception(str(e))
+
+
+if __name__ == '__main__':
+    standalone()

@@ -1,0 +1,13 @@
+clang-19
+clang-tidy-19
+emscripten
+gawk
+gettext
+parallel
+time
+valgrind
+lua5.1
+lua-argparse
+lua-lpeg
+python3-venv
+git

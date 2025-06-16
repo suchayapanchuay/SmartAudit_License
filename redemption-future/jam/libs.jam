@@ -1,0 +1,114 @@
+lib bz2 ;
+lib crypto ;
+lib dl ;
+lib gssapi_krb5 ;
+lib krb5 ;
+lib k5crypto ;
+lib libpng : : <name>png ;
+lib openssl : : <name>ssl ;
+lib snappy ;
+lib z ;
+alias png : libpng z ;
+
+explicit bz2 crypto dl gssapi_krb5 krb5 k5crypto libpng openssl snappy z png ;
+
+## hyperscan {
+if $(NO_HYPERSCAN) = 0
+{
+    lib hyperscan : : <name>hs ;
+}
+else
+{
+    alias hyperscan : ;
+    REDEMPTION_HYPERSCAN_FLAGS += <define>REDEMPTION_NO_HYPERSCAN=1 ;
+}
+explicit hyperscan ;
+## }
+
+## ffmpeg {
+if $(NO_FFMPEG) = 0
+{
+    local _FFMPEG_LINK_MODE = ;
+    local _FFMPEG_LIB_PATH = ;
+
+    if $(FFMPEG_LINK_MODE) != ""
+    {
+        _FFMPEG_LINK_MODE = <link>$(FFMPEG_LINK_MODE) ;
+    }
+
+    if $(FFMPEG_LIB_PATH) != ""
+    {
+        _FFMPEG_LIB_PATH = <search>$(FFMPEG_LIB_PATH) ;
+    }
+
+    lib avcodec  : : $(_FFMPEG_LINK_MODE) $(_FFMPEG_LIB_PATH) ;
+    lib avformat : : $(_FFMPEG_LINK_MODE) $(_FFMPEG_LIB_PATH) ;
+    lib avutil   : : $(_FFMPEG_LINK_MODE) $(_FFMPEG_LIB_PATH) ;
+    lib swscale  : : $(_FFMPEG_LINK_MODE) $(_FFMPEG_LIB_PATH) ;
+
+    alias ffmpeg : pthread avcodec avformat swscale avutil bz2 png z dl ;
+
+    lib pthread ;
+
+    explicit avcodec avformat avutil swscale ffmpeg pthread ;
+
+    FFMPEG_CXXFLAGS = ;
+    if $(FFMPEG_INC_PATH) != ""
+    {
+        FFMPEG_CXXFLAGS += <cxxflags>-isystem" $(FFMPEG_INC_PATH)" ;
+    }
+}
+else
+{
+    alias ffmpeg : ;
+    explicit ffmpeg ;
+    REDEMPTION_FFMPEG_FLAGS += <define>REDEMPTION_NO_FFMPEG=1 ;
+}
+## }
+
+
+## boost_stacktrace {
+if $(BOOST_STACKTRACE) != 0
+{
+    REDEMPTION_BOOST_STACKTRACE_FLAGS = <linkflags>-rdynamic ;
+    BOOST_STACKTRACE_LIBFLAGS = <library>boost_stacktrace ;
+    BOOST_STACKTRACE_LINKFLAGS =
+        $(BOOST_STACKTRACE_LIBFLAGS)
+        <variant>debug:<library>dl
+        <variant>san:<library>dl
+    ;
+
+    if $(BOOST_STACKTRACE) = "static_backtrace"
+    {
+        BOOST_STACKTRACE_CXXFLAGS = <define>BOOST_STACKTRACE_USE_BACKTRACE ;
+        lib boost_stacktrace : : <name>backtrace ;
+    }
+    else
+    {
+        BOOST_STACKTRACE_CXXFLAGS = <define>BOOST_STACKTRACE_DYN_LINK ;
+        if $(BOOST_STACKTRACE) = 1
+        {
+            lib boost_stacktrace : : <name>boost_stacktrace_backtrace ;
+        }
+        else
+        {
+            # boost_stacktrace_addr2line
+            # boost_stacktrace_backtrace
+            # boost_stacktrace_basic
+            # boost_stacktrace_noop
+            lib boost_stacktrace : : <name>boost_stacktrace_$(BOOST_STACKTRACE) ;
+        }
+    }
+
+    lib disable_boost_stacktrace : : <name>boost_stacktrace_noop ;
+    BOOST_NOOP_STACKTRACE_LIBFLAGS = <library>disable_boost_stacktrace ;
+    explicit disable_boost_stacktrace ;
+}
+else
+{
+    alias boost_stacktrace : ;
+    BOOST_STACKTRACE_CXXFLAGS = <define>REDEMPTION_NO_STACKTRACE ;
+}
+
+explicit boost_stacktrace ;
+## }

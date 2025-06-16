@@ -1,0 +1,40 @@
+# editor/IDE project
+*.kdev*
+
+# swap file
+*.kate-swp
+*.swp
+
+# temp file
+*~
+
+# package
+/debian
+
+# Jamroot
+/bin
+/projects/jsclient/bin
+/projects/qtclient/bin
+/projects/redemption_configs/bin
+/coverage.summary
+/coverage
+/projects/qtclient/DATA/
+# bin
+/tools/valgrind-filter/valgrind-filter
+/tools/redcryptofile/redcryptofile.so
+/tools/ocr/fonts/
+/tools/ocr/learning
+*.pyc
+*.pyo
+*.gcov
+
+# tools
+.mypy_cache
+.ruff_cache
+.gdb_history
+
+# GNU global
+/src/GPATH
+/src/GRTAGS
+/src/GSYMS
+/src/GTAGS

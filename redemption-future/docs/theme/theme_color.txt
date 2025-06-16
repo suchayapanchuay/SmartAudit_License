@@ -1,0 +1,1 @@
+In Redemption, color values can be defined as web colors (https://en.wikipedia.org/wiki/Web_colors#Extended_colors), RGB color in hexadecimal (with 0x prefix) or HTML code color (#rgb or #rrggbb)

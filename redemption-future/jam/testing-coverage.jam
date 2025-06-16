@@ -1,0 +1,82 @@
+import testing ;
+
+import toolset ;
+import feature : feature ;
+
+feature.feature <noopstacktrace> : off on : incidental ;
+
+constant CXXFLAGS_TEST :
+    <include>$(REDEMPTION_TEST_PATH)/includes
+    <define>FIXTURES_PATH='\"$(FIXTURES_PATH)\"'
+;
+
+obj log_test.o : $(REDEMPTION_TEST_PATH)/includes/test_only/log_as_logtest.cpp :
+    $(CXXFLAGS_TEST)
+    <cxxflags>-O3
+;
+
+obj register_exception.o :
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/impl/register_exception.cpp
+:
+    $(CXXFLAGS_TEST)
+    <cxxflags>-O3
+;
+
+lib libunit_test :
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/impl/test_framework.cpp
+    $(REDEMPTION_TEST_PATH)/includes/test_only/test_framework/redemption_unit_tests.cpp
+:
+    $(CXXFLAGS_TEST)
+    <link>shared
+    # <cxxflags>-frtti
+    # <define>BOOST_AUTO_TEST_MAIN
+    <define>BOOST_TEST_DYN_LINK
+    <cxxflags>-O3
+;
+
+explicit log_test.o register_exception.o libunit_test ;
+
+local _TEST_DEPENDENCIES = ;
+if $(FAST_CHECK) = 1
+{
+    _TEST_DEPENDENCIES = <define>REDEMPTION_UNIT_TEST_FAST_CHECK=1 ;
+}
+
+constant TEST_DEPENDENCIES :
+    <library>libunit_test
+    <library>log_test.o
+    # <cxxflags>-frtti
+    <define>BOOST_AUTO_TEST_MAIN
+    <define>BOOST_TEST_DYN_LINK
+    $(CXXFLAGS_TEST)
+    $(_TEST_DEPENDENCIES)
+;
+
+rule is_not_stacktrace_lib ( e )
+{
+    if $(e) != $(BOOST_STACKTRACE_LIBFLAGS)
+    {
+        return $(e) ;
+    }
+}
+
+import sequence ;
+
+rule test-run ( target : source : source_requirements * : requirements * : )
+{
+    if src/core/error.o in $(source_requirements)
+    {
+        source_requirements += register_exception.o ;
+    }
+
+    if "$(BOOST_STACKTRACE_LINKFLAGS)" != ""
+    {
+        if <noopstacktrace>on in $(requirements)
+        {
+            requirements = [ sequence.filter is_not_stacktrace_lib : $(requirements) ] ;
+            requirements += $(BOOST_NOOP_STACKTRACE_LIBFLAGS) ;
+        }
+    }
+
+    unit-test $(target) : $(source) $(source_requirements) : $(TEST_DEPENDENCIES) $(requirements) <define>RED_TEST_MODULE=$(source) ;
+}
