@@ -9,7 +9,6 @@ from models.license import License
 
 router = APIRouter()
 
-# Dependency สำหรับ session ฐานข้อมูล
 def get_db():
     db = SessionLocal()
     try:

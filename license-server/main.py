@@ -7,6 +7,5 @@ app = FastAPI()
 def root():
     return {"status": "License Server Running"}
 
-# รวม routers
 app.include_router(license_check.router, prefix="/api")
 app.include_router(auth_route.router, prefix="/api")

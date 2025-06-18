@@ -1,0 +1,28 @@
+USE license_db;
+
+INSERT INTO users (username, password_hash) VALUES (
+  'admin',
+  '$2b$12$JsDhEbPIsZQiNtvf6veHj..uk1zKEOpQiMvbWuZ.p7GaE1mIDi5s2'
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(255) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  role VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS licenses (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  product VARCHAR(255),
+  license_key VARCHAR(255) UNIQUE,
+  valid_until DATE,
+  is_active BOOLEAN DEFAULT TRUE,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+INSERT INTO users (username, password, role)
+VALUES ('admin', 'admin123', 'admin');
+

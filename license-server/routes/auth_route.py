@@ -10,6 +10,7 @@ from database import SessionLocal
 from models.user import User
 import os
 from dotenv import load_dotenv
+from models.user import User
 
 load_dotenv()
 
@@ -53,7 +54,6 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# POST: Login route
 @router.post("/login", response_model=Token)
 def login(user: UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == user.username).first()
@@ -63,7 +63,6 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": db_user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# GET: Logout route (JWT stateless จึงใช้ redirect/destroy ที่ client)
 @router.get("/logout")
 def logout():
     return {"message": "Logout successful (handled client-side)"}
