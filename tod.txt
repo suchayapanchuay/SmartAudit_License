@@ -1,28 +1,144 @@
-USE license_db;
+-- สร้างตารางเริ่มต้น (หากต้องการ)
+USE smartaudit;
 
-INSERT INTO users (username, password_hash) VALUES (
-  'admin',
-  '$2b$12$JsDhEbPIsZQiNtvf6veHj..uk1zKEOpQiMvbWuZ.p7GaE1mIDi5s2'
+CREATE TABLE licenses (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    license_key VARCHAR(255) UNIQUE NOT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    user_id INT NULL,
+    issued_date DATETIME NOT NULL,
+    expire_date DATETIME NOT NULL,
+    max_activations INT NOT NULL DEFAULT 1,
+    activations INT NOT NULL DEFAULT 0,
+    status ENUM('active', 'revoked', 'expired') NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS users (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  username VARCHAR(255) UNIQUE NOT NULL,
-  password VARCHAR(255) NOT NULL,
-  role VARCHAR(50),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,  -- ควรเพิ่มความยาวสำหรับเก็บ hash ที่ปลอดภัย
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS licenses (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT,
-  product VARCHAR(255),
-  license_key VARCHAR(255) UNIQUE,
-  valid_until DATE,
-  is_active BOOLEAN DEFAULT TRUE,
-  FOREIGN KEY (user_id) REFERENCES users(id)
+CREATE TABLE activations (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    license_id INT NOT NULL,
+    machine_id VARCHAR(100) NOT NULL,
+    activated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen DATETIME NULL,
+    status ENUM('active', 'revoked') NOT NULL DEFAULT 'active',
+    FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE,
+    UNIQUE KEY (license_id, machine_id)  -- กันไม่ให้เครื่องเดียวกัน activate license เดียวกันหลายครั้ง
 );
 
-INSERT INTO users (username, password, role)
-VALUES ('admin', 'admin123', 'admin');
+CREATE TABLE revoked_licenses (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    license_id INT NOT NULL,
+    revoked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reason TEXT NULL,
+    FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
+);
 
+CREATE INDEX idx_license_key ON licenses(license_key);
+CREATE INDEX idx_license_status ON licenses(status);
+CREATE INDEX idx_license_user ON licenses(user_id);
+CREATE INDEX idx_activation_license ON activations(license_id);
+
+CREATE TABLE products (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    default_max_activations INT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE license_types (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    duration_days INT NOT NULL  -- จำนวนวันก่อนหมดอายุ
+);
+
+CREATE TABLE audit_logs (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NULL,
+    action VARCHAR(50) NOT NULL,
+    table_name VARCHAR(50) NOT NULL,
+    record_id INT NOT NULL,
+    old_values TEXT NULL,
+    new_values TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import datetime
+
+from database import SessionLocal
+from models.license import License
+
+router = APIRouter()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class LicenseCheckRequest(BaseModel):
+    license_key: str
+
+@router.post("/check_license")
+def check_license(request: LicenseCheckRequest, db: Session = Depends(get_db)):
+    license_key = request.license_key
+    license = db.query(License).filter_by(license_key=license_key).first()
+    if not license:
+        raise HTTPException(status_code=404, detail="License not found")
+    if not license.active:
+        raise HTTPException(status_code=403, detail="Inactive license")
+    if license.valid_until and license.valid_until < datetime.utcnow():
+        raise HTTPException(status_code=403, detail="License expired")
+    return {"status": "valid", "product": license.product}
+
+@router.get("/check_license", response_class=HTMLResponse)
+def check_license_form():
+    return """
+    <html>
+        <head>
+            <title>Check License</title>
+        </head>
+        <body>
+            <h2>Check License Key</h2>
+            <form id="checkForm">
+                <input type="text" id="licenseKey" placeholder="Enter license key" />
+                <button type="submit">Check</button>
+            </form>
+            <pre id="result"></pre>
+
+            <script>
+                const form = document.getElementById("checkForm");
+                form.addEventListener("submit", async (e) => {
+                    e.preventDefault();
+                    const key = document.getElementById("licenseKey").value;
+                    const response = await fetch("/api/check_license", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ license_key: key })
+                    });
+                    const result = await response.json();
+                    document.getElementById("result").textContent = JSON.stringify(result, null, 2);
+                });
+            </script>
+        </body>
+    </html>
+    """
