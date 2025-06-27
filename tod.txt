@@ -77,6 +77,7 @@ CREATE TABLE audit_logs (
 
 
 
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -101,14 +102,26 @@ class LicenseCheckRequest(BaseModel):
 @router.post("/check_license")
 def check_license(request: LicenseCheckRequest, db: Session = Depends(get_db)):
     license_key = request.license_key
-    license = db.query(License).filter_by(license_key=license_key).first()
+    license = db.query(License).filter(License.license_key == license_key).first()
+    
     if not license:
         raise HTTPException(status_code=404, detail="License not found")
-    if not license.active:
-        raise HTTPException(status_code=403, detail="Inactive license")
-    if license.valid_until and license.valid_until < datetime.utcnow():
+    
+    # ตรวจสอบสถานะ license (เปลี่ยนจาก active เป็นตรวจสอบ status)
+    if license.status != 'active':
+        raise HTTPException(status_code=403, detail="License is not active")
+    
+    # ตรวจสอบวันหมดอายุ (เปลี่ยนจาก valid_until เป็น expire_date)
+    if license.expire_date and license.expire_date < datetime.utcnow():
         raise HTTPException(status_code=403, detail="License expired")
-    return {"status": "valid", "product": license.product}
+    
+    return {
+        "status": "valid",
+        "product": license.product_name,  # เปลี่ยนจาก product เป็น product_name
+        "expire_date": license.expire_date,
+        "max_activations": license.max_activations,
+        "current_activations": license.activations
+    }
 
 @router.get("/check_license", response_class=HTMLResponse)
 def check_license_form():
@@ -120,25 +133,237 @@ def check_license_form():
         <body>
             <h2>Check License Key</h2>
             <form id="checkForm">
-                <input type="text" id="licenseKey" placeholder="Enter license key" />
+                <input type="text" id="licenseKey" placeholder="Enter license key" required />
                 <button type="submit">Check</button>
             </form>
-            <pre id="result"></pre>
+            <div id="result" style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;"></div>
 
             <script>
                 const form = document.getElementById("checkForm");
+                const resultDiv = document.getElementById("result");
+                
                 form.addEventListener("submit", async (e) => {
                     e.preventDefault();
-                    const key = document.getElementById("licenseKey").value;
-                    const response = await fetch("/api/check_license", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ license_key: key })
-                    });
-                    const result = await response.json();
-                    document.getElementById("result").textContent = JSON.stringify(result, null, 2);
+                    const key = document.getElementById("licenseKey").value.trim();
+                    
+                    if (!key) {
+                        resultDiv.innerHTML = '<p style="color: red;">Please enter a license key</p>';
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch("/check_license", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ license_key: key })
+                        });
+                        
+                        if (!response.ok) {
+                            const error = await response.json();
+                            resultDiv.innerHTML = `<p style="color: red;">Error: ${error.detail}</p>`;
+                            return;
+                        }
+                        
+                        const data = await response.json();
+                        let html = `<h3>License Information</h3>
+                                   <p><strong>Status:</strong> <span style="color: green;">${data.status}</span></p>
+                                   <p><strong>Product:</strong> ${data.product}</p>
+                                   <p><strong>Expire Date:</strong> ${new Date(data.expire_date).toLocaleDateString()}</p>
+                                   <p><strong>Activations:</strong> ${data.current_activations}/${data.max_activations}</p>`;
+                        resultDiv.innerHTML = html;
+                        
+                    } catch (error) {
+                        resultDiv.innerHTML = `<p style="color: red;">Network error: ${error.message}</p>`;
+                    }
                 });
             </script>
         </body>
     </html>
     """
+
+--------------------------
+from fastapi import FastAPI
+from routes import license_check, auth_route
+
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"status": "License Server Running"}
+
+app.include_router(license_check.router, prefix="/api")
+app.include_router(auth_route.router, prefix="/api")
+--------------------------
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from pydantic import BaseModel
+from datetime import datetime, timedelta
+from database import SessionLocal
+from models.user import User
+import os
+from dotenv import load_dotenv
+from models.user import User
+
+load_dotenv()
+
+router = APIRouter()
+
+SECRET_KEY = os.getenv("SECRET_KEY", "default-secret")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: str | None = None
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+
+# Auth Utils
+def verify_password(plain, hashed):
+    return pwd_context.verify(plain, hashed)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+@router.post("/login", response_model=Token)
+def login(user: UserLogin, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if not db_user or not verify_password(user.password, db_user.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    access_token = create_access_token(data={"sub": db_user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/logout")
+def logout():
+    return {"message": "Logout successful (handled client-side)"}
+-------------
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import datetime
+from database import SessionLocal
+from models.license import License
+
+router = APIRouter()
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Request Model
+class LicenseCheckRequest(BaseModel):
+    license_key: str
+
+# POST: Check license key
+@router.post("/check_license")
+def check_license(request: LicenseCheckRequest, db: Session = Depends(get_db)):
+    license_key = request.license_key.strip()
+    license = db.query(License).filter(License.license_key == license_key).first()
+    
+    if not license:
+        raise HTTPException(status_code=404, detail="License not found")
+    
+    if license.status != 'active':
+        raise HTTPException(status_code=403, detail="License is not active")
+    
+    if license.expire_date and license.expire_date < datetime.utcnow():
+        raise HTTPException(status_code=403, detail="License expired")
+    
+    return {
+        "status": "valid",
+        "product": license.product_name,
+        "expire_date": license.expire_date,
+        "max_activations": license.max_activations,
+        "current_activations": license.activations
+    }
+
+# GET: Web form
+@router.get("/check_license", response_class=HTMLResponse)
+def check_license_form():
+    return """
+    <html>
+        <head>
+            <title>Check License</title>
+        </head>
+        <body>
+            <h2>Check License Key</h2>
+            <form id="checkForm">
+                <input type="text" id="licenseKey" placeholder="Enter license key" required />
+                <button type="submit">Check</button>
+            </form>
+            <div id="result" style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;"></div>
+
+            <script>
+                const form = document.getElementById("checkForm");
+                const resultDiv = document.getElementById("result");
+                
+                form.addEventListener("submit", async (e) => {
+                    e.preventDefault();
+                    const key = document.getElementById("licenseKey").value.trim();
+                    
+                    if (!key) {
+                        resultDiv.innerHTML = '<p style="color: red;">Please enter a license key</p>';
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch("/api/check_license", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ license_key: key })
+                        });
+                        
+                        if (!response.ok) {
+                            const error = await response.json();
+                            resultDiv.innerHTML = `<p style="color: red;">Error: ${error.detail}</p>`;
+                            return;
+                        }
+                        
+                        const data = await response.json();
+                        let html = `<h3>License Information</h3>
+                                   <p><strong>Status:</strong> <span style="color: green;">${data.status}</span></p>
+                                   <p><strong>Product:</strong> ${data.product}</p>
+                                   <p><strong>Expire Date:</strong> ${new Date(data.expire_date).toLocaleDateString()}</p>
+                                   <p><strong>Activations:</strong> ${data.current_activations}/${data.max_activations}</p>`;
+                        resultDiv.innerHTML = html;
+                        
+                    } catch (error) {
+                        resultDiv.innerHTML = `<p style="color: red;">Network error: ${error.message}</p>`;
+                    }
+                });
+            </script>
+        </body>
+    </html>
+    """
+
