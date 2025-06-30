@@ -2,8 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from database import Base, engine
 
-from routes import license_check, auth_route, license_create
+from routes import license_check, auth_route, license_route
 
 app = FastAPI(
     title="SmartAudit License Server",
@@ -11,9 +12,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+Base.metadata.create_all(bind=engine)
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  
+    CORSMiddleware, 
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,6 +92,6 @@ def health_check():
 
 # Include Routes
 app.include_router(license_check.router, prefix="/api", tags=["License"])
-app.include_router(license_create.router, prefix="/api", tags=["License"])
+app.include_router(license_route.router, prefix="/api", tags=["License"])
 app.include_router(auth_route.router, prefix="/api", tags=["Auth"])
 app.mount("/static", StaticFiles(directory="static"), name="static")

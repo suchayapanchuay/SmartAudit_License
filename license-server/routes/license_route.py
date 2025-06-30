@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 import random, string
+from typing import List, Optional
 
 from database import get_db
 from models.license import License
@@ -14,8 +15,8 @@ def generate_license_key():
 
 class LicenseCreateRequest(BaseModel):
     product_name: str
-    license_type_id: int | None = None
-    user_id: int | None = None
+    license_type_id: Optional[int] = None
+    user_id: Optional[int] = None
     duration_days: int = 30
     max_activations: int = 3
 
@@ -25,9 +26,25 @@ class LicenseCreateResponse(BaseModel):
     expire_date: datetime
     status: str
 
+class LicenseOut(BaseModel):
+    id: int
+    license_key: str
+    product_name: str
+    user_id: Optional[int]
+    license_type_id: Optional[int]
+    issued_date: datetime
+    expire_date: datetime
+    max_activations: int
+    activations: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
 @router.post("/license", response_model=LicenseCreateResponse)
 def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
-    # ตรวจสอบว่ามีชื่อสินค้าไหม
     if not req.product_name:
         raise HTTPException(status_code=400, detail="product_name is required")
 
@@ -52,7 +69,9 @@ def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
         expire_date=expire,
         max_activations=req.max_activations,
         activations=0,
-        status="active"
+        status="active",
+        created_at=now,
+        updated_at=now,
     )
 
     db.add(license)
@@ -65,3 +84,19 @@ def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
         expire_date=license.expire_date,
         status=license.status
     )
+
+@router.get("/licenses", response_model=List[LicenseOut])
+def get_licenses(db: Session = Depends(get_db)):
+    licenses = db.query(License).all()
+    return licenses
+
+@router.delete("/license/{license_id}")
+def delete_license(license_id: int, db: Session = Depends(get_db)):
+    license = db.query(License).filter(License.id == license_id).first()
+    if not license:
+        raise HTTPException(status_code=404, detail="License not found")
+    db.delete(license)
+    db.commit()
+    return {"message": "License deleted successfully"}
+
+

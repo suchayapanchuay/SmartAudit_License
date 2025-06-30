@@ -97,83 +97,112 @@ def check_license_form():
             <title>Check License</title>
             <style>
                 body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-                        Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-                    background-color: #f9fafb;
-                    padding: 2rem;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f0f4ff;
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                     display: flex;
                     justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
                 }
+
                 .container {
+                    background-color: #ffffff;
+                    padding: 2rem 2.5rem;
+                    border-radius: 12px;
+                    box-shadow: 0 8px 20px rgba(30, 64, 175, 0.15);
+                    max-width: 460px;
+                    width: 100%;
                     text-align: center;
                 }
-                img.logo {
-                    max-width: 140px;
-                    margin-bottom: 1.2rem;
-                }
-                h2 {
-                    color: #2c3e50;
+
+                .logo {
+                    max-width: 120px;
                     margin-bottom: 1.5rem;
                 }
+
+                h2 {
+                    color: #1e3a8a;
+                    margin-bottom: 1.5rem;
+                    font-weight: 700;
+                    font-size: 1.8rem;
+                }
+
                 form {
                     display: flex;
-                    max-width: 400px;
-                    margin: 0 auto;
                     gap: 0.5rem;
+                    margin-bottom: 1.5rem;
                 }
+
                 input[type="text"] {
                     flex-grow: 1;
                     padding: 0.6rem 1rem;
                     font-size: 1rem;
-                    border: 2px solid #ddd;
+                    border: 2px solid #c7d2fe;
                     border-radius: 6px;
-                    transition: border-color 0.3s ease;
-                }
-                input[type="text"]:focus {
                     outline: none;
-                    border-color: #2563eb;
-                    box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
+                    transition: border-color 0.3s ease;
+                    color: #1e3a8a;
                 }
+
+                input[type="text"]:focus {
+                    border-color: #2563eb;
+                    box-shadow: 0 0 8px rgba(37, 99, 235, 0.3);
+                }
+
                 button {
-                    padding: 0 1.2rem;
                     background-color: #2563eb;
                     color: white;
-                    font-weight: 600;
                     border: none;
+                    padding: 0.6rem 1.2rem;
+                    font-size: 1rem;
                     border-radius: 6px;
+                    font-weight: 600;
                     cursor: pointer;
                     transition: background-color 0.3s ease;
                 }
+
                 button:hover {
                     background-color: #1e40af;
                 }
+
                 #result {
-                    max-width: 400px;
-                    margin: 1.5rem auto 0 auto;
+                    text-align: left;
+                    background-color: #eef2ff;
+                    border-left: 4px solid #2563eb;
                     padding: 1rem 1.2rem;
-                    border-radius: 8px;
-                    background-color: white;
-                    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-                    font-size: 1rem;
-                    color: #333;
-                    min-height: 90px;
+                    border-radius: 6px;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+                    font-size: 0.95rem;
+                    color: #1e3a8a;
                     word-wrap: break-word;
                 }
-                #result p {
-                    margin: 0.4rem 0;
-                }
+
                 #result h3 {
                     margin-top: 0;
-                    margin-bottom: 1rem;
                     color: #1e3a8a;
+                    margin-bottom: 0.8rem;
                 }
+
                 .error {
                     color: #dc2626;
                     font-weight: 600;
                 }
+
                 .status-valid {
                     color: #16a34a;
                     font-weight: 700;
+                }
+
+                @media (max-width: 480px) {
+                    form {
+                        flex-direction: column;
+                    }
+
+                    input[type="text"], button {
+                        width: 100%;
+                    }
                 }
             </style>
         </head>
@@ -232,4 +261,5 @@ def check_license_form():
         </body>
     </html>
     """
+
 

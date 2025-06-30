@@ -1,9 +1,7 @@
-
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
 import random, string
 
 from database import get_db
@@ -11,7 +9,9 @@ from models.license import License
 
 router = APIRouter()
 
-# Request model สำหรับสร้าง License
+def generate_license_key():
+    return '-'.join(''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(4))
+
 class LicenseCreateRequest(BaseModel):
     product_name: str
     license_type_id: int | None = None
@@ -19,212 +19,49 @@ class LicenseCreateRequest(BaseModel):
     duration_days: int = 30
     max_activations: int = 3
 
-# ฟังก์ชันสร้าง license key แบบสุ่ม และตรวจสอบซ้ำใน DB
-def generate_license_key(db: Session):
-    while True:
-        key = '-'.join(''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(4))
-        exists = db.query(License).filter(License.license_key == key).first()
-        if not exists:
-            return key
-
-# Endpoint สร้าง License ใหม่
-@router.post("/license")
-def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
-    try:
-        license_key = generate_license_key(db)
-        now = datetime.utcnow()
-        expire = now + timedelta(days=req.duration_days)
-
-        license = License(
-            license_key=license_key,
-            product_name=req.product_name,
-            user_id=req.user_id,
-            license_type_id=req.license_type_id,
-            issued_date=now,
-            expire_date=expire,
-            max_activations=req.max_activations,
-            activations=0,
-            status="active"
-        )
-
-        db.add(license)
-        db.commit()
-        db.refresh(license)
-
-        return {
-            "license_key": license.license_key,
-            "expire_date": license.expire_date,
-            "product_name": license.product_name
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
-
-# Request model สำหรับตรวจสอบ License
-class LicenseCheckRequest(BaseModel):
+class LicenseCreateResponse(BaseModel):
     license_key: str
+    product_name: str
+    expire_date: datetime
+    status: str
 
-# Endpoint ตรวจสอบ License (POST)
-@router.post("/check_license")
-def check_license(
-    request: LicenseCheckRequest,
-    db: Session = Depends(get_db),
-):
-    license_key = request.license_key.strip()
-    license = db.query(License).filter(License.license_key == license_key).first()
+@router.post("/license", response_model=LicenseCreateResponse)
+def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
+    # ตรวจสอบว่ามีชื่อสินค้าไหม
+    if not req.product_name:
+        raise HTTPException(status_code=400, detail="product_name is required")
 
-    if not license:
-        raise HTTPException(status_code=404, detail="License not found")
+    # สร้าง license key ที่ไม่ซ้ำ
+    for _ in range(5):
+        license_key = generate_license_key()
+        existing = db.query(License).filter(License.license_key == license_key).first()
+        if not existing:
+            break
+    else:
+        raise HTTPException(status_code=500, detail="Failed to generate unique license key")
 
-    if license.status != "active":
-        raise HTTPException(status_code=403, detail="License is not active")
+    now = datetime.utcnow()
+    expire = now + timedelta(days=req.duration_days)
 
-    if license.expire_date and license.expire_date < datetime.utcnow():
-        raise HTTPException(status_code=403, detail="License expired")
+    license = License(
+        license_key=license_key,
+        product_name=req.product_name,
+        user_id=req.user_id,
+        license_type_id=req.license_type_id,
+        issued_date=now,
+        expire_date=expire,
+        max_activations=req.max_activations,
+        activations=0,
+        status="active"
+    )
 
-    return {
-        "status": "valid",
-        "product": license.product_name,
-        "expire_date": license.expire_date,
-        "max_activations": license.max_activations,
-        "current_activations": license.activations,
-    }
+    db.add(license)
+    db.commit()
+    db.refresh(license)
 
-# หน้าเว็บฟอร์มตรวจสอบ License (GET)
-@router.get("/check_license", response_class=HTMLResponse)
-def check_license_form():
-    return """
-    <html>
-        <head>
-            <title>Check License</title>
-            <style>
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-                        Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-                    background-color: #f9fafb;
-                    padding: 2rem;
-                    display: flex;
-                    justify-content: center;
-                }
-                h2 {
-                    text-align: center;
-                    color: #2c3e50;
-                    margin-bottom: 1.5rem;
-                }
-                form {
-                    display: flex;
-                    max-width: 400px;
-                    margin: 0 auto;
-                    gap: 0.5rem;
-                }
-                input[type="text"] {
-                    flex-grow: 1;
-                    padding: 0.6rem 1rem;
-                    font-size: 1rem;
-                    border: 2px solid #ddd;
-                    border-radius: 6px;
-                    transition: border-color 0.3s ease;
-                }
-                input[type="text"]:focus {
-                    outline: none;
-                    border-color: #2563eb;
-                    box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
-                }
-                button {
-                    padding: 0 1.2rem;
-                    background-color: #2563eb;
-                    color: white;
-                    font-weight: 600;
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    transition: background-color 0.3s ease;
-                }
-                button:hover {
-                    background-color: #1e40af;
-                }
-                #result {
-                    max-width: 400px;
-                    margin: 1.5rem auto 0 auto;
-                    padding: 1rem 1.2rem;
-                    border-radius: 8px;
-                    background-color: white;
-                    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-                    font-size: 1rem;
-                    color: #333;
-                    min-height: 90px;
-                    word-wrap: break-word;
-                }
-                #result p {
-                    margin: 0.4rem 0;
-                }
-                #result h3 {
-                    margin-top: 0;
-                    margin-bottom: 1rem;
-                    color: #1e3a8a;
-                }
-                .error {
-                    color: #dc2626;
-                    font-weight: 600;
-                }
-                .status-valid {
-                    color: #16a34a;
-                    font-weight: 700;
-                }
-            </style>
-        </head>
-        <body>
-            <div>
-            
-                <h2>Check License Key</h2>
-                <form id="checkForm" autocomplete="off">
-                    <input type="text" id="licenseKey" placeholder="Enter license key" required />
-                    <button type="submit">Check</button>
-                </form>
-                <div id="result"></div>
-            </div>
-
-            <script>
-                const form = document.getElementById("checkForm");
-                const resultDiv = document.getElementById("result");
-
-                form.addEventListener("submit", async (e) => {
-                    e.preventDefault();
-                    const key = document.getElementById("licenseKey").value.trim();
-
-                    if (!key) {
-                        resultDiv.innerHTML = '<p class="error">Please enter a license key</p>';
-                        return;
-                    }
-
-                    resultDiv.innerHTML = '<p>Checking license key...</p>';
-
-                    try {
-                        const response = await fetch("/api/check_license", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ license_key: key })
-                        });
-
-                        if (!response.ok) {
-                            const error = await response.json();
-                            resultDiv.innerHTML = `<p class="error">Error: ${error.detail}</p>`;
-                            return;
-                        }
-
-                        const data = await response.json();
-                        let html = `<h3>License Information</h3>
-                                   <p><strong>Status:</strong> <span class="status-valid">${data.status}</span></p>
-                                   <p><strong>Product:</strong> ${data.product}</p>
-                                   <p><strong>Expire Date:</strong> ${new Date(data.expire_date).toLocaleDateString()}</p>
-                                   <p><strong>Activations:</strong> ${data.current_activations}/${data.max_activations}</p>`;
-                        resultDiv.innerHTML = html;
-
-                    } catch (error) {
-                        resultDiv.innerHTML = `<p class="error">Network error: ${error.message}</p>`;
-                    }
-                });
-            </script>
-        </body>
-    </html>
-    """
-
+    return LicenseCreateResponse(
+        license_key=license.license_key,
+        product_name=license.product_name,
+        expire_date=license.expire_date,
+        status=license.status
+    )
