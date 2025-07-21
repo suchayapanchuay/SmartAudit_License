@@ -8,6 +8,9 @@ from typing import List, Optional
 from database import get_db
 from models.license import License
 
+
+from utils.logging import log_action
+
 router = APIRouter()
 
 def generate_license_key():
@@ -78,6 +81,9 @@ def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(license)
 
+    # ✅ บันทึกกิจกรรม
+    log_action(db, f"สร้าง License สำหรับ {license.product_name} ให้ user {license.user_id}")
+
     return LicenseCreateResponse(
         license_key=license.license_key,
         product_name=license.product_name,
@@ -95,8 +101,11 @@ def delete_license(license_id: int, db: Session = Depends(get_db)):
     license = db.query(License).filter(License.id == license_id).first()
     if not license:
         raise HTTPException(status_code=404, detail="License not found")
+
     db.delete(license)
     db.commit()
+
+    # ✅ บันทึกกิจกรรม
+    log_action(db, f"ลบ License {license.license_key} ของ user {license.user_id}")
+
     return {"message": "License deleted successfully"}
-
-

@@ -2,12 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from database import Base, engine
 
-from routes import license_check, auth_route, license_route
+from database import Base, engine
+from models.activity_log import ActivityLog
+from routes import license_check, auth_route, license_route, dashboard
 
 app = FastAPI(
-    title="SmartAudit License Server",
+    title="SmartClick License Server",
     description="API สำหรับตรวจสอบ license และจัดการ auth สำหรับ SmartAudit",
     version="1.0.0"
 )
@@ -43,23 +44,23 @@ def root():
                 }
                 .container {
                     background: white;
-                    padding: 2.5rem 3rem;
-                    border-radius: 12px;
-                    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-                    max-width: 480px;
+                    padding: 3rem 4rem;
+                    border-radius: 16px;
+                    box-shadow: 0 12px 30px rgba(0,0,0,0.1);
+                    max-width: 700px;  /* 👈 ขยายจาก 480px เป็น 700px */
                     width: 100%;
                     text-align: center;
                 }
                 h1 {
-                    margin-bottom: 0.5rem;
-                    color: #2563eb; /* blue-600 */
+                    margin-bottom: 1rem;
+                    color: #2563eb;
                     font-weight: 700;
-                    font-size: 2.5rem;
+                    font-size: 2.75rem;
                 }
                 p {
-                    margin: 0.7rem 0;
-                    font-size: 1.1rem;
-                    color: #4b5563; /* gray-600 */
+                    margin: 1rem 0;
+                    font-size: 1.2rem;
+                    color: #4b5563;
                 }
                 a {
                     color: #2563eb;
@@ -68,30 +69,29 @@ def root():
                     transition: color 0.3s ease;
                 }
                 a:hover {
-                    color: #1d4ed8; /* blue-700 */
+                    color: #1d4ed8;
                     text-decoration: underline;
                 }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>License Server Running</h1>
-                <p>API สำหรับตรวจสอบ License SmartAudit</p>
-                <p>API Docs : <a href="/docs" target="_blank" rel="noopener noreferrer">Swagger UI</a></p>
-                <p>Check License Key : <a href="/api/check_license" target="_blank" rel="noopener noreferrer">Check License</a></p>
+                <h1>SmartAudit License Server</h1>
+                <p>ระบบ API สำหรับตรวจสอบและจัดการ License ของ SmartAudit</p>
+                <p><a href="/docs" target="_blank">Swagger API Docs</a></p>
+                <p><a href="/api/check_license" target="_blank">ตรวจสอบ License Key</a></p>
+                <p><a href="/api/dashboard" target="_blank">ดูข้อมูล Dashboard (JSON)</a></p>
             </div>
         </body>
     </html>
     """
 
-
-# Health Check (ใช้สำหรับ Docker, Load Balancer หรือ Monitoring)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
-# Include Routes
 app.include_router(license_check.router, prefix="/api", tags=["License"])
 app.include_router(license_route.router, prefix="/api", tags=["License"])
 app.include_router(auth_route.router, prefix="/api", tags=["Auth"])
+app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
 app.mount("/static", StaticFiles(directory="static"), name="static")
