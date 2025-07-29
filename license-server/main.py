@@ -47,7 +47,7 @@ def root():
                     padding: 3rem 4rem;
                     border-radius: 16px;
                     box-shadow: 0 12px 30px rgba(0,0,0,0.1);
-                    max-width: 700px;  /* 👈 ขยายจาก 480px เป็น 700px */
+                    max-width: 700px; 
                     width: 100%;
                     text-align: center;
                 }
