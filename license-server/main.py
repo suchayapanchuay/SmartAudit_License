@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from routes.trial_requests import router as trial_router
 from routes.admin_notify import router as admin_stream_router
 from routes.debug_seed import router as debug_router  
+from database import Base,engine
 #from routes import license_check, auth_route, license_route, dashboard
 
 app = FastAPI()
@@ -86,6 +87,8 @@ def root():
     </html>
     """
 
+Base.metadata.create_all(bind=engine)
+
 app.include_router(trial_router)
 app.include_router(admin_stream_router)
 app.include_router(debug_router)
@@ -98,3 +101,5 @@ app.include_router(debug_router)
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
