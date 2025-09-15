@@ -1,5 +1,5 @@
 services: 
-  mariadb: #เป็น container ที่รันฐานข้อมูล (MariaDB)
+  mariadb:
     image: mariadb:10.11
     container_name: mariadb
     restart: always
@@ -13,22 +13,32 @@ services:
       - ./mariadb-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-palealeale123"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
-  license-server: #เป็น container ที่รัน FastAPI (API server)
+  license-server:
     build:
       context: ../license-server
       dockerfile: Dockerfile
     container_name: license-server
     restart: always
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     environment:
       DATABASE_URL: mysql+pymysql://smartaudit_user:alealeale123@mariadb:3306/smartaudit
       SECRET_KEY: "alealeale123"
     ports:
       - "8000:8000"
     command: >
-      bash -c "sleep 10 && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
-      
+      uvicorn main:app --host 0.0.0.0 --port 8000
+    # ถ้าต้องการ hot reload ระหว่าง dev:
+    # volumes:
+    #   - ../license-server:/app
+    # command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
 volumes:
   mariadb_data:

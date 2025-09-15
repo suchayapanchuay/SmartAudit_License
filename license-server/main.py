@@ -1,23 +1,23 @@
+# main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from routes.trial_requests import router as trial_router
+from routes.admin_notify import router as admin_stream_router
+from routes.debug_seed import router as debug_router  
+#from routes import license_check, auth_route, license_route, dashboard
 
-from database import Base, engine
-from models.activity_log import ActivityLog
-from routes import license_check, auth_route, license_route, dashboard
-
-app = FastAPI(
-    title="SmartClick License Server",
-    description="API สำหรับตรวจสอบ license และจัดการ auth สำหรับ SmartAudit",
-    version="1.0.0"
-)
-
-Base.metadata.create_all(bind=engine)
+app = FastAPI()
 
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["http://localhost:3000"],
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",      
+        "http://127.0.0.1:3000",      
+        "http://localhost:3001",      
+        "http://127.0.0.1:3001",
+    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,12 +86,15 @@ def root():
     </html>
     """
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+app.include_router(trial_router)
+app.include_router(admin_stream_router)
+app.include_router(debug_router)
 
-app.include_router(license_check.router, prefix="/api", tags=["License"])
-app.include_router(license_route.router, prefix="/api", tags=["License"])
-app.include_router(auth_route.router, prefix="/api", tags=["Auth"])
-app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
-app.mount("/static", StaticFiles(directory="static"), name="static")
+#app.include_router(license_check.router, prefix="/api", tags=["License"])
+#app.include_router(license_route.router, prefix="/api", tags=["License"])
+#app.include_router(auth_route.router, prefix="/api", tags=["Auth"])
+#app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
+
+@app.get("/health")
+def health():
+    return {"ok": True}

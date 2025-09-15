@@ -1,363 +1,116 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from database import get_db
-from models.license import License
-from models.user import User
-from models.activity_log import ActivityLog  
-from datetime import date
-from sqlalchemy import func
-from fastapi.responses import JSONResponse
-
-router = APIRouter()
-
-@router.get("/dashboard")
-def get_dashboard_data(db: Session = Depends(get_db)):
-    today = date.today()
-
-    total_licenses = db.query(func.count(License.id)).scalar()
-    active_licenses = db.query(License).filter(License.expire_date >= today).count()
-    expired_licenses = db.query(License).filter(License.expire_date < today).count()
-    total_users = db.query(func.count(User.id)).scalar()
-
-    raw_chart = (
-        db.query(
-            func.date_format(License.created_at, '%Y-%m').label("month"),
-            func.count(License.id).label("activations")
-        )
-        .group_by(func.date_format(License.created_at, '%Y-%m'))
-        .order_by(func.date_format(License.created_at, '%Y-%m'))
-        .all()
-    )
-
-    chart_data = [{"month": month, "activations": activations} for month, activations in raw_chart]
-
-    logs = (
-        db.query(ActivityLog)
-        .order_by(ActivityLog.created_at.desc())
-        .limit(10)
-        .all()
-    )
-
-    activity_log = [
-        f"{log.created_at.strftime('%Y-%m-%d %H:%M:%S')} - {log.action}" for log in logs
-    ]
-
-    return JSONResponse(
-        content={
-            "total_licenses": total_licenses,
-            "active_licenses": active_licenses,
-            "expired_licenses": expired_licenses,
-            "total_users": total_users,
-            "chart_data": chart_data,
-            "activity_log": activity_log,
-        },
-        media_type="application/json; charset=utf-8"
-    )
-
-
-# models/activity_log.py
-
-from sqlalchemy import Column, Integer, String, DateTime
-from datetime import datetime
-from database import Base
-
-class ActivityLog(Base):
-    __tablename__ = "activity_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    action = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)  
-
-# utils/logging.py
-
-from models.activity_log import ActivityLog
-from sqlalchemy.orm import Session
-
-def log_action(db: Session, action: str):
-    print("Logging action:", action) 
-    log = ActivityLog(action=action)
-    db.add(log)
-    db.commit()
-
-
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
-import random, string
-from typing import List, Optional
-from utils.logging import log_action
-from database import get_db
-from models.license import License
-
-
-router = APIRouter()
-
-def generate_license_key():
-    return '-'.join(''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(4))
-
-class LicenseCreateRequest(BaseModel):
-    product_name: str
-    license_type_id: Optional[int] = None
-    user_id: Optional[int] = None
-    duration_days: int = 30
-    max_activations: int = 3
-
-class LicenseCreateResponse(BaseModel):
-    license_key: str
-    product_name: str
-    expire_date: datetime
-    status: str
-
-class LicenseOut(BaseModel):
-    id: int
-    license_key: str
-    product_name: str
-    user_id: Optional[int]
-    license_type_id: Optional[int]
-    issued_date: datetime
-    expire_date: datetime
-    max_activations: int
-    activations: int
-    status: str
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        orm_mode = True
-
-@router.post("/license", response_model=LicenseCreateResponse)
-def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
-    if not req.product_name:
-        raise HTTPException(status_code=400, detail="product_name is required")
-
-    for _ in range(5):
-        license_key = generate_license_key()
-        existing = db.query(License).filter(License.license_key == license_key).first()
-        if not existing:
-            break
-    else:
-        raise HTTPException(status_code=500, detail="Failed to generate unique license key")
-
-    now = datetime.utcnow()
-    expire = now + timedelta(days=req.duration_days)
-
-    license = License(
-        license_key=license_key,
-        product_name=req.product_name,
-        user_id=req.user_id,
-        license_type_id=req.license_type_id,
-        issued_date=now,
-        expire_date=expire,
-        max_activations=req.max_activations,
-        activations=0,
-        status="active",
-        created_at=now,
-        updated_at=now,
-    )
-
-    db.add(license)
-    db.commit()
-    db.refresh(license)
-
-    user_info = f"ให้ user {license.user_id}" if license.user_id is not None else "โดยไม่ระบุผู้ใช้"
-    log_action(db, f"สร้าง License สำหรับ {license.product_name} {user_info}")
-
-    return LicenseCreateResponse(
-        license_key=license.license_key,
-        product_name=license.product_name,
-        expire_date=license.expire_date,
-        status=license.status
-    )
-
-
-@router.get("/licenses", response_model=List[LicenseOut])
-def get_licenses(db: Session = Depends(get_db)):
-    licenses = db.query(License).all()
-    return licenses
-
-@router.delete("/license/{license_id}")
-def delete_license(license_id: int, db: Session = Depends(get_db)):
-    license = db.query(License).filter(License.id == license_id).first()
-    if not license:
-        raise HTTPException(status_code=404, detail="License not found")
-
-    db.delete(license)
-    db.commit()
-
-    log_action(db, f"ลบ License {license.license_key} ของ user {license.user_id}")
-
-    return {"message": "License deleted successfully"}
-
-
-
-
-
-
-
-
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-
-export default function Dashboard() {
-  const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        const res = await fetch("http://127.0.0.1:8000/api/dashboard");
-        if (!res.ok) throw new Error("โหลดข้อมูลไม่สำเร็จ");
-        const json = await res.json();
-        setData(json);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDashboard();
-  }, []);
-
-  if (loading) return <div style={statusStyle}>กำลังโหลดข้อมูล...</div>;
-  if (error) return <div style={{ ...statusStyle, color: "#dc2626" }}>{error}</div>;
-
-  return (
-    <div style={containerStyle}>
-      <h2 style={titleStyle}>Admin Dashboard</h2>
-
-      <div style={cardGrid}>
-        <Card title="License ทั้งหมด" value={data.total_licenses} />
-        <Card title="ใช้งานแล้ว" value={data.active_licenses} />
-        <Card title="หมดอายุ" value={data.expired_licenses} />
-        <Card title="ผู้ใช้งาน" value={data.total_users} />
-      </div>
-
-      <div style={sectionStyle}>
-        <h3 style={sectionTitle}>การใช้งาน License (รายเดือน)</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={data.chart_data}>
-            <XAxis dataKey="month" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="activations" fill="#2563eb" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div style={{ display: "flex", gap: 16, marginBottom: 40 }}>
-        <button style={btnStyle} onClick={() => navigate("/create")}>
-          ➕ Create License
-        </button>
-        <button style={btnStyle} onClick={() => navigate("/licenses")}>
-          View License
-        </button>
-      </div>
-
-      <div style={sectionStyle}>
-        <h3 style={sectionTitle}>ประวัติกิจกรรมล่าสุด</h3>
-        {data?.activity_log?.length > 0 ? (
-          data.activity_log.map((item, idx) => (
-            <div key={idx} style={logItemStyle}>
-              • {item}
-            </div>
-          ))
-        ) : (
-          <div style={{ color: "#94a3b8" }}>ไม่มีข้อมูล</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// 🔸 Card component
-const Card = ({ title, value }) => (
-  <div style={cardStyle}>
-    <div style={{ color: "#64748b", fontSize: 14 }}>{title}</div>
-    <div style={{ fontSize: 28, fontWeight: "bold", color: "#1e3a8a", marginTop: 8 }}>{value}</div>
-  </div>
-);
-
-const containerStyle = {
-  maxWidth: 1200,
-  margin: "0 auto",
-  padding: "40px 20px",
-  fontFamily: "system-ui, sans-serif",
-};
-
-const titleStyle = {
-  fontSize: 32,
-  fontWeight: "bold",
-  color: "#1e3a8a",
-  marginBottom: 32,
-  textAlign: "center",
-};
-
-const cardGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-  gap: 20,
-  marginBottom: 40,
-};
-
-const cardStyle = {
-  background: "#ffffff",
-  borderRadius: 16,
-  boxShadow: "0 2px 10px rgba(0, 0, 0, 0.05)",
-  padding: 24,
-  textAlign: "center",
-};
-
-const sectionStyle = {
-  background: "#ffffff",
-  padding: 24,
-  borderRadius: 16,
-  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
-  marginBottom: 40,
-};
-
-const sectionTitle = {
-  color: "#1e3a8a",
-  fontSize: 18,
-  fontWeight: 600,
-  marginBottom: 16,
-};
-
-const btnStyle = {
-  flex: 1,
-  padding: "14px 20px",
-  fontSize: 16,
-  fontWeight: 600,
-  color: "#ffffff",
-  backgroundColor: "#2563eb",
-  border: "none",
-  borderRadius: 10,
-  boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
-  cursor: "pointer",
-  transition: "background 0.2s",
-};
-
-const logItemStyle = {
-  padding: "10px 0",
-  borderBottom: "1px solid #f1f5f9",
-  fontSize: 15,
-  color: "#334155",
-};
-
-const statusStyle = {
-  textAlign: "center",
-  padding: "100px 0",
-  fontSize: 18,
-  color: "#334155",
-};
+# === sys.path: ให้มองเห็น project-root/shared ก่อน import อื่นๆ ===
+import os, sys, importlib.util
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+# =====================================================================
+
+from fastapi import FastAPI, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.routing import APIRoute
+
+from database import Base, engine
+
+# ======= MODELS (ของคุณเดิม) =======
+from models.activity_log import ActivityLog  # ถ้ามี
+from models.product import Product
+from models.customer import Customer
+from models.order import Order
+
+# ======= ROUTES (ของคุณเดิม) =======
+from routes import license_check, auth_route, license_route, dashboard
+
+# ======= ROUTES (ใหม่) =======
+from routes import order_route
+from routes import admin_notify
+
+# --- DEBUG: พิสูจน์ว่า Python หา routes.trial_requests เจอไฟล์ไหน ---
+spec = importlib.util.find_spec("routes.trial_requests")
+print("[BOOT] routes.trial_requests origin:", spec.origin if spec else "NOT FOUND")
+
+# ถ้า NOT FOUND ตรงนี้ให้หยุดก่อนเลย (อย่าพยายาม import ต่อ), แต่เพื่อเดโม เราจะลอง import:
+try:
+    from routes.trial_requests import router as trials_router
+    print("[BOOT] trials_router imported OK")
+    print("[BOOT] trials_router routes:",
+          [(r.path, r.methods) for r in getattr(trials_router, "routes", [])])
+except Exception as e:
+    print("[BOOT] import routes.trial_requests FAILED:", repr(e))
+    trials_router = APIRouter()  # สร้างว่าง ๆ กันแอปล้ม
+
+# --- PROBE: สร้าง router โปรบทดสอบ include_router ---
+probe = APIRouter()
+@probe.get("/__probe")
+async def __probe():
+    return {"ok": True}
+
+app = FastAPI(
+    title="SmartClick License Server",
+    description="API สำหรับตรวจสอบ license และจัดการ auth สำหรับ SmartAudit",
+    version="1.0.0",
+)
+
+# สร้างตารางทั้งหมด (หลัง import models ด้านบน)
+Base.metadata.create_all(bind=engine)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "https://www.smartclick.co.th",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return """
+    <html>
+        <head><title>SmartAudit License Server</title></head>
+        <body>
+            <h1>SmartAudit License Server</h1>
+            <p><a href="/docs" target="_blank">Swagger API Docs</a></p>
+            <p><a href="/api/check_license" target="_blank">ตรวจสอบ License Key</a></p>
+            <p><a href="/api/dashboard" target="_blank">ดูข้อมูล Dashboard (JSON)</a></p>
+        </body>
+    </html>
+    """
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+# ======= Include Routers =======
+app.include_router(license_check.router, prefix="/api", tags=["License"])
+app.include_router(license_route.router,  prefix="/api", tags=["License"])
+app.include_router(auth_route.router,     prefix="/api", tags=["Auth"])
+app.include_router(dashboard.router,      prefix="/api", tags=["Dashboard"])
+
+app.include_router(order_route.router,    prefix="/api", tags=["Orders"])
+app.include_router(admin_notify.router,   prefix="/api", tags=["AdminNotify"])
+
+# PROBE router (ต้องเห็นแน่ๆ ถ้า include_router ทำงานถูก)
+app.include_router(probe,                 prefix="/api")  # => /api/__probe
+
+# Trials router (ถ้า import สำเร็จและมี endpoint จะโผล่)
+app.include_router(trials_router,         prefix="/api")  # => /api/trial-requests
+
+# Static files
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Debug: รายการเส้นทางตอนสตาร์ต
+@app.on_event("startup")
+async def _print_routes_on_startup():
+    print("=== ROUTES ON START === (cwd:", os.getcwd(), ") (main file:", __file__, ")")
+    for r in app.routes:
+        if isinstance(r, APIRoute):
+            print(" -", r.path, r.methods)

@@ -18,3 +18,9 @@ uvicorn==0.34.3
 passlib==1.7.4  # <-- เพิ่มนี้สำหรับการเข้ารหัส password
 bcrypt==4.1.2   # <-- เพิ่มนี้สำหรับการ hash แบบปลอดภัย
 python-jose==3.3.0  # <-- เพิ่มนี้สำหรับ JWT (ถ้าใช้)
+pymysql==1.1.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+pydantic[email]
+requestsrequests==2.32.5
+sse-starlette==2.1.0  
