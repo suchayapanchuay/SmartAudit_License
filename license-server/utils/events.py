@@ -1,35 +1,48 @@
 # utils/events.py
 import asyncio
-from typing import Tuple, Dict, Any
+import json
+from typing import Any, Dict, Optional
 
-_subscribers: "set[asyncio.Queue[Tuple[str, Dict[str, Any]]]]" = set()
+class EventBus:
+    def __init__(self):
+        self._subs: list[asyncio.Queue] = []
+        self._lock = asyncio.Lock()
 
-async def publish(event: str, data: Dict[str, Any]):
-    dead = []
-    for q in list(_subscribers):
-        try:
-            q.put_nowait((event, data))
-        except Exception:
-            dead.append(q)
-    for q in dead:
-        _subscribers.discard(q)
+    async def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        async with self._lock:
+            self._subs.append(q)
+        return q
 
-async def subscribe():
-    """
-    Async generator: yields (event_type, data)
-    """
-    q: asyncio.Queue = asyncio.Queue(maxsize=1000)
-    _subscribers.add(q)
+    async def unsubscribe(self, q: asyncio.Queue):
+        async with self._lock:
+            if q in self._subs:
+                self._subs.remove(q)
+
+    async def publish(self, event_name: str, data: Dict[str, Any]):
+        payload = {"event": event_name, "data": data}
+        async with self._lock:
+            for q in list(self._subs):
+                try:
+                    q.put_nowait(payload)
+                except asyncio.QueueFull:
+                    try: self._subs.remove(q)
+                    except ValueError: pass
+
+_bus = EventBus()
+
+async def publish(event_name: str, data: Dict[str, Any]):
+    await _bus.publish(event_name, data)
+
+async def sse_iter(event_filter: Optional[set[str]] = None):
+    q = await _bus.subscribe()
     try:
         while True:
-            yield await q.get()
+            item = await q.get()
+            name = item.get("event")
+            data = item.get("data")
+            if event_filter and name not in event_filter:
+                continue
+            yield f"event: {name}\n" + "data: " + json.dumps(data, ensure_ascii=False) + "\n\n"
     finally:
-        _subscribers.discard(q)
-
-def sse_format(event: str | None, data: Dict[str, Any]) -> str:
-    # data จะเป็น JSON stringify ที่ฝั่ง StreamingResponse จัดการ
-    import json
-    payload = json.dumps(data, ensure_ascii=False)
-    if event:
-      return f"event: {event}\n" + f"data: {payload}\n\n"
-    return f"data: {payload}\n\n"
+        await _bus.unsubscribe(q)

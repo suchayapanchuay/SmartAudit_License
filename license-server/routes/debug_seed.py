@@ -1,25 +1,23 @@
 # routes/debug_seed.py
 from fastapi import APIRouter
 from utils.events import publish
-import secrets, time
+import secrets
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["Debug"])
 
 @router.post("/orders/_debug/seed-trial")
 async def seed_trial():
     demo = {
-        "order_code": "TRIAL-" + secrets.token_hex(3).upper(),
-        "name": "Demo User",
-        "email": "demo@example.com",
-        "meta": {
-            "firstName": "Demo",
-            "lastName": "User",
-            "company": "ACME Co.",
-            "industry": "Technology",
-            "country": "Thailand",
-            "message": "This is a seeded order.",
-        },
-        "ts": time.time(),
+        "id": 0,
+        "customer_name": "Demo User",
+        "customer_email": "demo@example.com",
+        "company": "ACME Co.",
+        "phone": "+66900000000",
+        "items": [{"sku": "CONTACT_SALES", "name": "Contact Sales Lead", "qty": 1}],
+        "grand_total": None,
+        "note": "This is a seeded order.",
+        "status": "pending",
+        "form_type": "Request",
     }
     await publish("order_created", demo)
-    return {"seeded": True, "message": "trial order event pushed"}
+    return {"seeded": True, "order_code": "TRIAL-" + secrets.token_hex(3).upper()}
