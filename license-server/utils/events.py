@@ -1,48 +1,116 @@
-# utils/events.py
+#import asyncio
+#import json
+#from typing import AsyncGenerator, Dict, Any, List
+#
+#_subscribers: List[asyncio.Queue] = []
+#
+#def _event_wrap(event_type: str, data: Dict[str, Any]) -> str:
+#    return json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
+#
+#async def _broadcast(msg: str) -> None:
+#    for q in list(_subscribers):
+#        try:
+#            q.put_nowait(msg)
+#        except Exception:
+#            pass
+#
+#def publish(event_type: str, data: Dict[str, Any]) -> None:
+#    # เรียกได้จาก async context (endpoint async)
+#    msg = _event_wrap(event_type, data)
+#    asyncio.create_task(_broadcast(msg))
+#
+#def subscribe() -> asyncio.Queue:
+#    q: asyncio.Queue = asyncio.Queue()
+#    _subscribers.append(q)
+#    return q
+#
+#def unsubscribe(q: asyncio.Queue) -> None:
+#    try:
+#        _subscribers.remove(q)
+#    except ValueError:
+#        pass
+#
+#async def sse_generator(q: asyncio.Queue) -> AsyncGenerator[str, None]:
+#    try:
+#        ping_task = asyncio.create_task(_ping(q))
+#        while True:
+#            data = await q.get()
+#            yield f"data: {data}\n\n"
+#    except asyncio.CancelledError:
+#        pass
+#    finally:
+#        ping_task.cancel()
+#
+#async def _ping(q: asyncio.Queue):
+#    while True:
+#        await asyncio.sleep(25)
+#        try:
+#            q.put_nowait(_event_wrap("ping", {"ts": asyncio.get_event_loop().time()}))
+#        except Exception:
+#            pass
+
 import asyncio
 import json
-from typing import Any, Dict, Optional
+from typing import AsyncGenerator, Dict, Any, List, Optional
 
-class EventBus:
-    def __init__(self):
-        self._subs: list[asyncio.Queue] = []
-        self._lock = asyncio.Lock()
+_subscribers: List[asyncio.Queue] = []
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
 
-    async def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        async with self._lock:
-            self._subs.append(q)
-        return q
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _main_loop
+    _main_loop = loop
 
-    async def unsubscribe(self, q: asyncio.Queue):
-        async with self._lock:
-            if q in self._subs:
-                self._subs.remove(q)
+def _event_wrap(event_type: str, data: Dict[str, Any]) -> str:
+    return json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
 
-    async def publish(self, event_name: str, data: Dict[str, Any]):
-        payload = {"event": event_name, "data": data}
-        async with self._lock:
-            for q in list(self._subs):
-                try:
-                    q.put_nowait(payload)
-                except asyncio.QueueFull:
-                    try: self._subs.remove(q)
-                    except ValueError: pass
+async def _broadcast(msg: str) -> None:
+    for q in list(_subscribers):
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            pass
 
-_bus = EventBus()
-
-async def publish(event_name: str, data: Dict[str, Any]):
-    await _bus.publish(event_name, data)
-
-async def sse_iter(event_filter: Optional[set[str]] = None):
-    q = await _bus.subscribe()
+def publish(event_type: str, data: Dict[str, Any]) -> None:
+    msg = _event_wrap(event_type, data)
     try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_broadcast(msg))
+    except RuntimeError:
+        if _main_loop and _main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(_broadcast(msg), _main_loop)
+        else:
+            for q in list(_subscribers):
+                try:
+                    q.put_nowait(msg)
+                except Exception:
+                    pass
+
+def subscribe() -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue()
+    _subscribers.append(q)
+    return q
+
+def unsubscribe(q: asyncio.Queue) -> None:
+    try:
+        _subscribers.remove(q)
+    except ValueError:
+        pass
+
+async def sse_generator(q: asyncio.Queue) -> AsyncGenerator[str, None]:
+    try:
+        ping_task = asyncio.create_task(_ping(q))
         while True:
-            item = await q.get()
-            name = item.get("event")
-            data = item.get("data")
-            if event_filter and name not in event_filter:
-                continue
-            yield f"event: {name}\n" + "data: " + json.dumps(data, ensure_ascii=False) + "\n\n"
+            data = await q.get()
+            yield f"data: {data}\n\n"
+    except asyncio.CancelledError:
+        pass
     finally:
-        await _bus.unsubscribe(q)
+        ping_task.cancel()
+
+async def _ping(q: asyncio.Queue):
+    while True:
+        await asyncio.sleep(25)
+        try:
+            q.put_nowait(_event_wrap("ping", {"ts": asyncio.get_event_loop().time()}))
+        except Exception:
+            pass

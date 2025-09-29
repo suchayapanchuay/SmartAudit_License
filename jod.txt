@@ -1,116 +1,975 @@
-# === sys.path: ให้มองเห็น project-root/shared ก่อน import อื่นๆ ===
-import os, sys, importlib.util
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-# =====================================================================
+// src/app/AddClient.jsx (wired to real API)
+import React, { useEffect, useState, useMemo } from "react";
+import Sidebar from "./SideBar";
+import { FiChevronDown } from "react-icons/fi";
+import { useNavigate, useLocation } from "react-router-dom";
+import Topbar from "./Topbar";
+import { API_BASE } from "./config";
 
-from fastapi import FastAPI, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.routing import APIRoute
+/* THEME */
+const THEME = {
+  pageBg: "#0B1A2D",
+  stageBg: "#0E1D33",
+  card: "#13253D",
+  border: "rgba(255,255,255,0.12)",
+  text: "rgba(255,255,255,0.92)",
+  textMut: "rgba(255,255,255,0.70)",
+  textFaint: "rgba(255,255,255,0.55)",
+  accent: "#3B82F6",
+  warn: "#FCD34D",
+  danger: "#F87171",
+  success: "#34D399",
+};
 
-from database import Base, engine
+/* STYLES */
+const styles = {
+  root: { display: "flex", minHeight: "1024px", background: THEME.pageBg, fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial" },
+  content: { flex: 1, display: "flex", justifyContent: "center", padding: "18px 16px", position: "relative" },
+  stage: { width: 1152, minHeight: 988, background: THEME.stageBg, borderRadius: 16, border: `1px solid ${THEME.border}`, padding: 24, position: "relative" },
 
-# ======= MODELS (ของคุณเดิม) =======
-from models.activity_log import ActivityLog  # ถ้ามี
-from models.product import Product
-from models.customer import Customer
-from models.order import Order
+  title: { fontSize: 40, fontWeight: 900, color: THEME.text, margin: "14px 0 6px" },
+  breadcrumb: { color: THEME.textMut, fontWeight: 600, marginBottom: 12 },
 
-# ======= ROUTES (ของคุณเดิม) =======
-from routes import license_check, auth_route, license_route, dashboard
+  card: { background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 18 },
+  row: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 12 },
+  label: { color: THEME.textMut, fontSize: 13, fontWeight: 700, marginBottom: 6 },
+  pillInput: { width: "80%", background: "rgba(255,255,255,0.06)", color: THEME.text, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", outline: "none" },
+  inline: { display: "flex", gap: 10, alignItems: "center" },
 
-# ======= ROUTES (ใหม่) =======
-from routes import order_route
-from routes import admin_notify
+  typeSelectWrap: { position: "relative", width: 220, marginBottom: 12 },
+  typeSelect: { width: "100%", appearance: "none", background: "rgba(255,255,255,0.08)", color: THEME.text, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 40px 10px 12px", fontWeight: 700, cursor: "pointer" },
+  caret: { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: THEME.textFaint, pointerEvents: "none" },
 
-# --- DEBUG: พิสูจน์ว่า Python หา routes.trial_requests เจอไฟล์ไหน ---
-spec = importlib.util.find_spec("routes.trial_requests")
-print("[BOOT] routes.trial_requests origin:", spec.origin if spec else "NOT FOUND")
+  credBox: { border: `1px solid ${THEME.border}`, borderRadius: 10, padding: 16, marginTop: 12 },
+  smallBtn: { border: "none", padding: "8px 10px", fontWeight: 700, borderRadius: 8, cursor: "pointer" },
+  smallBtnBlue: { background: "#52B1E6", color: "#062033" },
+  smallBtnGreen: { background: "#3DD9B0", color: "#062033" },
 
-# ถ้า NOT FOUND ตรงนี้ให้หยุดก่อนเลย (อย่าพยายาม import ต่อ), แต่เพื่อเดโม เราจะลอง import:
-try:
-    from routes.trial_requests import router as trials_router
-    print("[BOOT] trials_router imported OK")
-    print("[BOOT] trials_router routes:",
-          [(r.path, r.methods) for r in getattr(trials_router, "routes", [])])
-except Exception as e:
-    print("[BOOT] import routes.trial_requests FAILED:", repr(e))
-    trials_router = APIRouter()  # สร้างว่าง ๆ กันแอปล้ม
+  actions: { display: "flex", gap: 10, marginTop: 18 },
+  btnPrimary: { borderRadius: 8, padding: "10px 14px", fontWeight: 800, cursor: "pointer", border: "none", background: THEME.accent, color: "#fff" },
+  btnGhost: { borderRadius: 8, padding: "10px 14px", fontWeight: 800, cursor: "pointer", border: `1px solid ${THEME.border}`, background: "transparent", color: THEME.text },
 
-# --- PROBE: สร้าง router โปรบทดสอบ include_router ---
-probe = APIRouter()
-@probe.get("/__probe")
-async def __probe():
+  banner: (bg) => ({ background: bg, color: "#062033", borderRadius: 10, padding: "10px 12px", fontWeight: 700, marginBottom: 12 }),
+};
+
+/* helper แปลงข้อมูลจาก API -> ฟอร์ม */
+function mapTrialToForm(d) {
+  return {
+    reqType: "trial",
+    firstName: d.firstName || "",
+    lastName: d.lastName || "",
+    email: d.email || "",
+    phone: d.phone || "",
+    company: d.company || "",
+    industry: d.industry || "",
+    country: d.country || "",
+    message: d.message || "",
+    estimateUser: d.estimateUser || "",
+    trialDays: d.durationDays ? `${d.durationDays} days` : "",
+  };
+}
+function mapOrderToForm(d) {
+  const [fn, ...rest] = (d.customer_name || "").split(" ");
+  return {
+    reqType: "purchase",
+    firstName: fn || "",
+    lastName: rest.join(" "),
+    email: d.customer_email || "",
+    phone: d.phone || "",
+    company: d.company || "",
+    industry: d.industry || "",
+    country: d.country || "",
+    message: d.note || "",
+    estimateUser: d.estimateUser || "",
+    trialDays: "",
+  };
+}
+
+// แปลง "15 days" -> 15
+function parseDays(s) {
+  if (!s) return null;
+  const m = String(s).match(/\d+/);
+  return m ? Number(m[0]) : null;
+}
+
+// ยิง API ที่ endpoint ต่าง ๆ เผื่อโครงสร้าง backend ต่างสภาพ (fallback)
+async function postJSONWithFallback(paths, body) {
+  const opts = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  for (const p of paths) {
+    const url = `${API_BASE}${p}`;
+    const res = await fetch(url, opts);
+    if (res.ok) {
+      return { res, data: await res.json(), url };
+    }
+    // ถ้าเป็น 404 ให้ลอง path ถัดไป
+    if (res.status !== 404) {
+      const text = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${text}`);
+    }
+  }
+  throw new Error("No working /clients endpoint (tried multiple paths)");
+}
+
+export default function AddClient() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [search, setSearch] = useState("");
+  const [reqType, setReqType] = useState("trial");
+  const [form, setForm] = useState({
+    firstName: "Suchaya",
+    lastName: "Panchuai",
+    email: "suchaya19@gmail.com",
+    phone: "0631234567",
+    company: "BlankSpace",
+    industry: "Software Engineer",
+    country: "Thailand",
+    estimateUser: "10",
+    message: "Please contact us within this month.",
+    trialDays: "15 days",
+    username: "User101",
+    password: "U12S36",
+  });
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+
+  // พรีฟิลทันทีจาก state (กรณีกดมาจาก Notifications)
+  useEffect(() => {
+    const p = location.state?.prefill || null;
+    if (p) {
+      if (p.reqType) setReqType(p.reqType);
+      setForm((f) => ({
+        ...f,
+        ...p,
+        username: p.username || f.username,
+        password: p.password || f.password,
+      }));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ดึงข้อมูลจริงจาก API ตาม source/sourceId แล้วอัปเดตฟอร์ม (ข้อมูลล่าสุด)
+  useEffect(() => {
+    const source = location.state?.source; // "trial" | "order"
+    const sourceId = location.state?.sourceId;
+    if (!source || !sourceId) return;
+
+    (async () => {
+      try {
+        const url = source === "order" ? `${API_BASE}/orders/${sourceId}` : `${API_BASE}/trial-requests/${sourceId}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const mapped = source === "order" ? mapOrderToForm(data) : mapTrialToForm(data);
+        setReqType(mapped.reqType);
+        setForm((f) => ({
+          ...f,
+          ...mapped,
+          username: f.username, // ไม่ทับ user/pass ที่ผู้ใช้สุ่มในหน้า
+          password: f.password,
+        }));
+      } catch (e) {
+        console.error("Fetch source data failed:", e?.message || e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patch = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const randomUsername = () => {
+    const base = ["User", "Client", "Member", "Acct", "Cust"];
+    const name = base[Math.floor(Math.random() * base.length)] + (100 + Math.floor(Math.random() * 900));
+    patch("username", name);
+  };
+  const randomPassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let pw = "";
+    for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+    patch("password", pw);
+  };
+
+  const required = useMemo(() => [
+    ["firstName", "First Name"],
+    ["lastName", "Last Name"],
+    ["email", "Email"],
+    ["username", "Username"],
+    ["password", "Password"],
+  ], []);
+
+  function validate() {
+    const miss = required.filter(([k]) => !String(form[k] || "").trim()).map(([,label]) => label);
+    if (miss.length) {
+      setError(`กรอกข้อมูลให้ครบ: ${miss.join(", ")}`);
+      return false;
+    }
+    // email format (เบื้องต้น)
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)) {
+      setError("อีเมลไม่ถูกต้อง");
+      return false;
+    }
+    setError("");
+    return true;
+  }
+
+  async function onCreate() {
+    if (submitting) return;
+    if (!validate()) return;
+    setSubmitting(true);
+    setOkMsg("");
+    setError("");
+
+    // เตรียม payload สำหรับ backend
+    const payload = {
+      requestType: reqType, // "trial" | "purchase" | "support"
+      search,
+      source: location.state?.source || null,
+      sourceId: location.state?.sourceId || null,
+      profile: {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        email: form.email,
+        phone: form.phone,
+        company: form.company,
+        industry: form.industry,
+        country: form.country,
+        message: form.message,
+        estimateUser: form.estimateUser ? Number(form.estimateUser) : null,
+      },
+      credentials: {
+        username: form.username,
+        password: form.password,
+      },
+      trial: {
+        days: parseDays(form.trialDays), // null ถ้าไม่ใช่ trial
+      },
+    };
+
+    try {
+      // ลองยิงหลาย path เผื่อโครง backend ต่าง repo
+      const paths = [
+        "/clients", // แนะนำให้เปิดจริงที่ backend
+        "/api/clients",
+        "/v1/clients",
+      ];
+      const { data } = await postJSONWithFallback(paths, payload);
+
+      // คาดหวังว่า backend จะคืน { id, ... }
+      const newId = data?.id || data?.clientId || null;
+      setOkMsg("สร้างลูกค้าเรียบร้อยแล้ว");
+
+      // นำทางไปหน้ารายการหรือรายละเอียด ถ้ามี id
+      if (newId) {
+        navigate(`/client/${newId}`, { state: { flash: "Client created" } });
+      } else {
+        navigate("/client", { state: { flash: "Client created" } });
+      }
+    } catch (e) {
+      // พยายามแปล error ให้เข้าใจง่าย
+      const msg = String(e?.message || e);
+      if (/409/.test(msg) || /duplicate/i.test(msg)) {
+        setError("อีเมลหรือชื่อผู้ใช้ซ้ำในระบบ");
+      } else if (/NetworkError|Failed to fetch|CORS/.test(msg)) {
+        setError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (อาจเป็น CORS/เครือข่าย)");
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={styles.root}>
+      <Sidebar />
+
+      <div style={styles.content}>
+        <div style={styles.stage}>
+          <Topbar
+            placeholder="Search clients"
+            onSearchChange={setSearch}
+            defaultFilter="all"
+            onViewAllPath="/Noti"
+          />
+
+          <div style={styles.title}>Add Client</div>
+          <div style={styles.breadcrumb}>
+            <span style={{ cursor: "pointer" }} onClick={() => navigate("/client")}>
+              Clients
+            </span>
+            &nbsp;&gt;&nbsp; <span style={{ color: "#9CC3FF" }}>Add Client</span>
+          </div>
+
+          {!!error && <div style={styles.banner(THEME.warn)}>{error}</div>}
+          {!!okMsg && <div style={styles.banner(THEME.success)}>{okMsg}</div>}
+
+          <div style={styles.card}>
+            <div style={styles.typeSelectWrap}>
+              <select value={reqType} onChange={(e) => setReqType(e.target.value)} style={styles.typeSelect}>
+                <option value="trial">Trial Request</option>
+                <option value="purchase">Purchase Request</option>
+                <option value="support">Support Request</option>
+              </select>
+              <FiChevronDown style={styles.caret} />
+            </div>
+
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>First Name</div>
+                <input value={form.firstName} onChange={(e) => patch("firstName", e.target.value)} style={styles.pillInput} />
+              </div>
+              <div>
+                <div style={styles.label}>Last Name</div>
+                <input value={form.lastName} onChange={(e) => patch("lastName", e.target.value)} style={styles.pillInput} />
+              </div>
+            </div>
+
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>Email</div>
+                <input value={form.email} onChange={(e) => patch("email", e.target.value)} style={styles.pillInput} />
+              </div>
+              <div>
+                <div style={styles.label}>Phone</div>
+                <input value={form.phone} onChange={(e) => patch("phone", e.target.value)} style={styles.pillInput} />
+              </div>
+            </div>
+
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>Country</div>
+                <input value={form.country} onChange={(e) => patch("country", e.target.value)} style={styles.pillInput} />
+              </div>
+              <div>
+                <div style={styles.label}>Company</div>
+                <input value={form.company} onChange={(e) => patch("company", e.target.value)} style={styles.pillInput} />
+              </div>
+            </div>
+
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>Industry</div>
+                <input value={form.industry} onChange={(e) => patch("industry", e.target.value)} style={styles.pillInput} />
+              </div>
+              <div>
+                <div style={styles.label}>Message</div>
+                <input value={form.message} onChange={(e) => patch("message", e.target.value)} style={styles.pillInput} />
+              </div>
+            </div>
+
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>Estimate User</div>
+                <input value={form.estimateUser} onChange={(e) => patch("estimateUser", e.target.value)} style={styles.pillInput} />
+              </div>
+              <div>
+                <div style={styles.label}>Trial</div>
+                <input value={form.trialDays} onChange={(e) => patch("trialDays", e.target.value)} style={styles.pillInput} />
+              </div>
+            </div>
+
+            <div style={styles.credBox}>
+              <div className="row" style={styles.row}>
+                <div>
+                  <div style={styles.label}>Username</div>
+                  <div style={styles.inline}>
+                    <input value={form.username} onChange={(e) => patch("username", e.target.value)} style={styles.pillInput} />
+                    <button style={{ ...styles.smallBtn, ...styles.smallBtnBlue }} onClick={randomUsername}>
+                      Random Username
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <div style={styles.label}>Password</div>
+                  <div style={styles.inline}>
+                    <input value={form.password} onChange={(e) => patch("password", e.target.value)} style={styles.pillInput} />
+                    <button style={{ ...styles.smallBtn, ...styles.smallBtnGreen }} onClick={randomPassword}>
+                      Random Password
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.actions}>
+              <button style={{ ...styles.btnPrimary, opacity: submitting ? 0.7 : 1 }} onClick={onCreate} disabled={submitting}>
+                {submitting ? "Creating..." : "Create Client"}
+              </button>
+              <button style={styles.btnGhost} onClick={() => navigate(-1)} disabled={submitting}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+// ===============================
+// mariadb-init.sql (DB schema & seed)
+// ===============================
+/*
+Paste this into your MariaDB init (runs once), or run it manually.
+It includes your original products/customers/orders plus new tables
+for storing client profiles and credentials used by AddClient.jsx.
+*/
+
+-- ensure db
+CREATE DATABASE IF NOT EXISTS smartaudit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE smartaudit;
+
+-- products (as provided)
+CREATE TABLE IF NOT EXISTS products (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  sku VARCHAR(64) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL,
+  term ENUM('perpetual','subscription') NOT NULL DEFAULT 'subscription',
+  duration_months INT NULL,
+  max_activations INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- customers (as provided)
+CREATE TABLE IF NOT EXISTS customers (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  name VARCHAR(255),
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- orders (as provided)
+CREATE TABLE IF NOT EXISTS orders (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_code VARCHAR(64) NOT NULL UNIQUE,
+  customer_id INT NOT NULL,
+  product_id INT NOT NULL,
+  amount_cents INT NOT NULL DEFAULT 0,
+  currency VARCHAR(8) DEFAULT 'THB',
+  status ENUM('pending','paid','failed','cancelled') NOT NULL DEFAULT 'pending',
+  meta TEXT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
+  CONSTRAINT fk_orders_product  FOREIGN KEY (product_id)  REFERENCES products(id)
+) ENGINE=InnoDB;
+
+-- NEW: clients (profile captured from AddClient form)
+CREATE TABLE IF NOT EXISTS clients (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  request_type ENUM('trial','purchase','support') NOT NULL,
+  source VARCHAR(32) NULL,
+  source_id VARCHAR(64) NULL,
+
+  first_name VARCHAR(100) NOT NULL,
+  last_name  VARCHAR(100) NOT NULL,
+  email      VARCHAR(255) NOT NULL,
+  phone      VARCHAR(64)  NULL,
+  company    VARCHAR(255) NULL,
+  industry   VARCHAR(255) NULL,
+  country    VARCHAR(128) NULL,
+  message    VARCHAR(1000) NULL,
+  estimate_user INT NULL,
+  trial_days INT NULL,
+
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_clients_email (email)
+) ENGINE=InnoDB;
+
+-- NEW: client_credentials (username/password for portal login etc.)
+CREATE TABLE IF NOT EXISTS client_credentials (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  client_id INT NOT NULL,
+  username VARCHAR(100) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_client_credentials_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_client_username (username)
+) ENGINE=InnoDB;
+
+-- seed sample product (as provided)
+INSERT INTO products (sku, name, term, duration_months, max_activations)
+SELECT 'SMART_AUDIT_TRIAL', 'Smart Audit (Free Trial)', 'subscription', 1, 1
+WHERE NOT EXISTS (SELECT 1 FROM products WHERE sku='SMART_AUDIT_TRIAL');
+
+
+// =============================================
+// FastAPI backend (single-file example: server/main.py)
+// =============================================
+/*
+Minimal FastAPI service that implements POST /clients
+compatible with the payload sent by AddClient.jsx.
+
+Install:
+  pip install fastapi uvicorn "SQLAlchemy>=2" pymysql passlib[bcrypt] python-dotenv
+
+Run:
+  export DATABASE_URL="mysql+pymysql://user:pass@127.0.0.1:3306/smartaudit"
+  uvicorn main:app --reload
+*/
+
+# main.py
+from datetime import datetime
+from typing import Optional
+import os
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Enum, TIMESTAMP, ForeignKey
+)
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.dialects.mysql import ENUM as MYSQL_ENUM
+from passlib.hash import bcrypt
+
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@127.0.0.1:3306/smartaudit")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+
+# --- Models ---
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True)
+    request_type = Column(MYSQL_ENUM('trial','purchase','support'), nullable=False)
+    source = Column(String(32))
+    source_id = Column(String(64))
+    first_name = Column(String(100), nullable=False)
+    last_name  = Column(String(100), nullable=False)
+    email      = Column(String(255), nullable=False, unique=True)
+    phone      = Column(String(64))
+    company    = Column(String(255))
+    industry   = Column(String(255))
+    country    = Column(String(128))
+    message    = Column(String(1000))
+    estimate_user = Column(Integer)
+    trial_days    = Column(Integer)
+    created_at = Column(TIMESTAMP, nullable=True)
+
+    credentials = relationship("ClientCredential", back_populates="client", uselist=False, cascade="all, delete-orphan")
+
+class ClientCredential(Base):
+    __tablename__ = "client_credentials"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    username = Column(String(100), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(TIMESTAMP, nullable=True)
+
+    client = relationship("Client", back_populates="credentials")
+
+# --- Schemas (Pydantic) ---
+class ProfileIn(BaseModel):
+    firstName: str
+    lastName: str
+    email: EmailStr
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    message: Optional[str] = None
+    estimateUser: Optional[int] = None
+
+class CredIn(BaseModel):
+    username: str
+    password: str
+
+class TrialIn(BaseModel):
+    days: Optional[int] = None
+
+class ClientCreateIn(BaseModel):
+    requestType: str
+    search: Optional[str] = None
+    source: Optional[str] = None
+    sourceId: Optional[str] = None
+    profile: ProfileIn
+    credentials: CredIn
+    trial: TrialIn
+
+class ClientOut(BaseModel):
+    id: int
+    email: EmailStr
+    username: str
+
+    class Config:
+        from_attributes = True
+
+# --- App ---
+app = FastAPI(title="SmartAudit API")
+
+@app.on_event("startup")
+def on_startup():
+    # ensure tables exist (safe if already created by SQL)
+    Base.metadata.create_all(engine)
+
+@app.post("/clients", response_model=ClientOut)
+def create_client(body: ClientCreateIn):
+    req_type = body.requestType
+    if req_type not in {"trial","purchase","support"}:
+        raise HTTPException(status_code=400, detail="Invalid requestType")
+
+    db = SessionLocal()
+    try:
+        # unique checks
+        if db.query(Client).filter_by(email=body.profile.email).first():
+            raise HTTPException(status_code=409, detail="Email already exists")
+        if db.query(ClientCredential).filter_by(username=body.credentials.username).first():
+            raise HTTPException(status_code=409, detail="Username already exists")
+
+        client = Client(
+            request_type=req_type,
+            source=body.source,
+            source_id=body.sourceId,
+            first_name=body.profile.firstName,
+            last_name=body.profile.lastName,
+            email=body.profile.email,
+            phone=body.profile.phone,
+            company=body.profile.company,
+            industry=body.profile.industry,
+            country=body.profile.country,
+            message=body.profile.message,
+            estimate_user=body.profile.estimateUser,
+            trial_days=body.trial.days,
+            created_at=datetime.utcnow(),
+        )
+        db.add(client)
+        db.flush()  # get client.id
+
+        cred = ClientCredential(
+            client_id=client.id,
+            username=body.credentials.username,
+            password_hash=bcrypt.hash(body.credentials.password),
+            created_at=datetime.utcnow(),
+        )
+        db.add(cred)
+        db.commit()
+        db.refresh(client)
+
+        return ClientOut(id=client.id, email=client.email, username=cred.username)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+# Healthcheck
+@app.get("/health")
+def health():
     return {"ok": True}
 
-app = FastAPI(
-    title="SmartClick License Server",
-    description="API สำหรับตรวจสอบ license และจัดการ auth สำหรับ SmartAudit",
-    version="1.0.0",
-)
 
-# สร้างตารางทั้งหมด (หลัง import models ด้านบน)
-Base.metadata.create_all(bind=engine)
-
-# CORS
+// =============================================
+// CORS (optional): server/cors.py or add to main
+// =============================================
+"""
+from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:4173",
-        "https://www.smartclick.co.th",
-    ],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+"""
+
+
+// =============================================
+// Frontend wiring check (no change needed if using /clients)
+// =============================================
+/*
+In AddClient.jsx we already try POST /clients (fallback /api/clients, /v1/clients).
+If you run the FastAPI above at API_BASE and expose /clients, it will insert into MariaDB
+and return { id, email, username } for navigation.
+*/
+
+
+
+// =============================================
+// Project wiring — map to your structure
+// =============================================
+/*
+Target tree (as you provided):
+project-root/
+└── license-server/
+    ├── main.py
+    ├── database.py
+    ├── models/
+    │   ├── user.py
+    │   ├── license.py
+    │   ├── product.py
+    │   ├── order.py
+    │   ├── customer.py
+    │   ├── trial_request.py
+    │   └── client.py              <-- NEW
+    │       client_credential.py   <-- NEW
+    ├── routes/
+    │   ├── auth_route.py
+    │   ├── license_check.py
+    │   ├── order_route.py
+    │   ├── trial_requests.py
+    │   ├── admin_notify.py
+    │   └── client_route.py        <-- NEW (POST /api/clients)
+    ├── utils/
+    │   ├── validator.py
+    │   ├── response.py
+    │   └── events.py
+    ├── tools/
+    │   ├── generate_license.py
+    │   └── revoke_license.py
+    ├── .env
+    ├── requirements.txt
+    ├── Dockerfile
+    └── README.md
+*/
+
+// ---------------------------------------------
+// license-server/database.py
+// ---------------------------------------------
+"""SQLAlchemy session/engine factory for MariaDB"""
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@127.0.0.1:3306/smartaudit")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+# dependency (FastAPI)
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+// ---------------------------------------------
+// license-server/models/client.py
+// ---------------------------------------------
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, Integer, String, TIMESTAMP
+from sqlalchemy.dialects.mysql import ENUM as MYSQL_ENUM
+
+Base = declarative_base()
+
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True)
+    request_type = Column(MYSQL_ENUM('trial','purchase','support'), nullable=False)
+    source = Column(String(32))
+    source_id = Column(String(64))
+
+    first_name = Column(String(100), nullable=False)
+    last_name  = Column(String(100), nullable=False)
+    email      = Column(String(255), nullable=False, unique=True)
+    phone      = Column(String(64))
+    company    = Column(String(255))
+    industry   = Column(String(255))
+    country    = Column(String(128))
+    message    = Column(String(1000))
+    estimate_user = Column(Integer)
+    trial_days    = Column(Integer)
+
+    created_at = Column(TIMESTAMP, nullable=True)
+
+
+// ---------------------------------------------
+// license-server/models/client_credential.py
+// ---------------------------------------------
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, Integer, String, TIMESTAMP, ForeignKey
+
+Base = declarative_base()
+
+class ClientCredential(Base):
+    __tablename__ = "client_credentials"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    username = Column(String(100), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(TIMESTAMP, nullable=True)
+
+
+// ---------------------------------------------
+// license-server/routes/client_route.py
+// ---------------------------------------------
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
+from datetime import datetime
+from passlib.hash import bcrypt
+
+from ..database import get_db, engine
+from ..models.client import Client, Base as ClientBase
+from ..models.client_credential import ClientCredential, Base as CredBase
+
+# ensure tables exist (safe if already created by SQL)
+ClientBase.metadata.create_all(engine)
+CredBase.metadata.create_all(engine)
+
+router = APIRouter(prefix="/api", tags=["clients"])
+
+class ProfileIn(BaseModel):
+    firstName: str
+    lastName: str
+    email: EmailStr
+    phone: str | None = None
+    company: str | None = None
+    industry: str | None = None
+    country: str | None = None
+    message: str | None = None
+    estimateUser: int | None = None
+
+class CredIn(BaseModel):
+    username: str
+    password: str
+
+class TrialIn(BaseModel):
+    days: int | None = None
+
+class ClientCreateIn(BaseModel):
+    requestType: str
+    search: str | None = None
+    source: str | None = None
+    sourceId: str | None = None
+    profile: ProfileIn
+    credentials: CredIn
+    trial: TrialIn
+
+class ClientOut(BaseModel):
+    id: int
+    email: EmailStr
+    username: str
+
+@router.post("/clients", response_model=ClientOut)
+def create_client(body: ClientCreateIn, db: Session = Depends(get_db)):
+    if body.requestType not in {"trial","purchase","support"}:
+        raise HTTPException(status_code=400, detail="Invalid requestType")
+
+    # unique checks
+    if db.query(Client).filter(Client.email == body.profile.email).first():
+        raise HTTPException(status_code=409, detail="Email already exists")
+    if db.query(ClientCredential).filter(ClientCredential.username == body.credentials.username).first():
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    client = Client(
+        request_type=body.requestType,
+        source=body.source,
+        source_id=body.sourceId,
+        first_name=body.profile.firstName,
+        last_name=body.profile.lastName,
+        email=body.profile.email,
+        phone=body.profile.phone,
+        company=body.profile.company,
+        industry=body.profile.industry,
+        country=body.profile.country,
+        message=body.profile.message,
+        estimate_user=body.profile.estimateUser,
+        trial_days=body.trial.days,
+        created_at=datetime.utcnow(),
+    )
+    db.add(client)
+    db.flush()
+
+    cred = ClientCredential(
+        client_id=client.id,
+        username=body.credentials.username,
+        password_hash=bcrypt.hash(body.credentials.password),
+        created_at=datetime.utcnow(),
+    )
+    db.add(cred)
+    db.commit()
+
+    return ClientOut(id=client.id, email=client.email, username=cred.username)
+
+
+// ---------------------------------------------
+// license-server/main.py
+// ---------------------------------------------
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .routes.client_route import router as client_router
+# from .routes.license_check import router as license_router
+# from .routes.auth_route import router as auth_router
+
+app = FastAPI(title="SmartAudit License Server")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/", response_class=HTMLResponse)
-def root():
-    return """
-    <html>
-        <head><title>SmartAudit License Server</title></head>
-        <body>
-            <h1>SmartAudit License Server</h1>
-            <p><a href="/docs" target="_blank">Swagger API Docs</a></p>
-            <p><a href="/api/check_license" target="_blank">ตรวจสอบ License Key</a></p>
-            <p><a href="/api/dashboard" target="_blank">ดูข้อมูล Dashboard (JSON)</a></p>
-        </body>
-    </html>
-    """
+app.include_router(client_router)
+# app.include_router(license_router)
+# app.include_router(auth_router)
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"}
+def health():
+    return {"ok": True}
 
-# ======= Include Routers =======
-app.include_router(license_check.router, prefix="/api", tags=["License"])
-app.include_router(license_route.router,  prefix="/api", tags=["License"])
-app.include_router(auth_route.router,     prefix="/api", tags=["Auth"])
-app.include_router(dashboard.router,      prefix="/api", tags=["Dashboard"])
 
-app.include_router(order_route.router,    prefix="/api", tags=["Orders"])
-app.include_router(admin_notify.router,   prefix="/api", tags=["AdminNotify"])
+// ---------------------------------------------
+// license-server/requirements.txt (append)
+// ---------------------------------------------
+fastapi
+uvicorn
+SQLAlchemy>=2
+pymysql
+passlib[bcrypt]
+python-dotenv
 
-# PROBE router (ต้องเห็นแน่ๆ ถ้า include_router ทำงานถูก)
-app.include_router(probe,                 prefix="/api")  # => /api/__probe
 
-# Trials router (ถ้า import สำเร็จและมี endpoint จะโผล่)
-app.include_router(trials_router,         prefix="/api")  # => /api/trial-requests
+// ---------------------------------------------
+// deploy/docker-compose.yml (excerpt)
+// ---------------------------------------------
+version: "3.9"
+services:
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: smartaudit
+    volumes:
+      - ./mariadb-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - dbdata:/var/lib/mysql
+    ports: ["3306:3306"]
 
-# Static files
-if os.path.isdir("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+  api:
+    build: ../license-server
+    environment:
+      DATABASE_URL: mysql+pymysql://root:rootpass@mariadb:3306/smartaudit
+    depends_on: [mariadb]
+    ports: ["8000:8000"]
 
-# Debug: รายการเส้นทางตอนสตาร์ต
-@app.on_event("startup")
-async def _print_routes_on_startup():
-    print("=== ROUTES ON START === (cwd:", os.getcwd(), ") (main file:", __file__, ")")
-    for r in app.routes:
-        if isinstance(r, APIRoute):
-            print(" -", r.path, r.methods)
+volumes: { dbdata: {} }
+
+
+// ---------------------------------------------
+// Frontend .env (example)
+// ---------------------------------------------
+# API_BASE used by AddClient.jsx
+VITE_API_BASE=http://localhost:8000
+
+
+// ---------------------------------------------
+// README (quick steps)
+// ---------------------------------------------
+/*
+1) Start DB & API (Docker) or run MariaDB + uvicorn manually
+2) Ensure frontend uses API_BASE (Vite env or config.js)
+3) Open Add Client page, fill form, press Create → record inserted.
+*/

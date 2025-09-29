@@ -1,8 +1,7 @@
--- mariadb-init.sql
 CREATE DATABASE IF NOT EXISTS smartaudit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE smartaudit;
 
--- products ต้องมี sku + ฟิลด์อื่นตามโมเดล
+-- products
 CREATE TABLE IF NOT EXISTS products (
   id INT AUTO_INCREMENT PRIMARY KEY,
   sku VARCHAR(64) NOT NULL UNIQUE,
@@ -13,7 +12,7 @@ CREATE TABLE IF NOT EXISTS products (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
--- customers สำหรับเก็บอีเมลผู้สั่ง
+-- customers
 CREATE TABLE IF NOT EXISTS customers (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
@@ -21,7 +20,7 @@ CREATE TABLE IF NOT EXISTS customers (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
--- orders ใช้ TEXT สำหรับ meta เพื่อความคอมพาตกับ MariaDB ทุกเวอร์ชัน
+-- orders
 CREATE TABLE IF NOT EXISTS orders (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_code VARCHAR(64) NOT NULL UNIQUE,
@@ -36,9 +35,74 @@ CREATE TABLE IF NOT EXISTS orders (
   CONSTRAINT fk_orders_product  FOREIGN KEY (product_id)  REFERENCES products(id)
 ) ENGINE=InnoDB;
 
--- (ถ้ามีสคีมาเก่าอยู่และอยากเก็บไว้ ก็สามารถสร้างตาราง licenses/activations ตามเดิมเพิ่มได้)
+-- clients
+CREATE TABLE IF NOT EXISTS clients (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  request_type ENUM('trial','purchase','support') NOT NULL,
+  source VARCHAR(32) NULL,
+  source_id VARCHAR(64) NULL,
+  first_name VARCHAR(100) NOT NULL,
+  last_name  VARCHAR(100) NOT NULL,
+  email      VARCHAR(255) NOT NULL,
+  phone      VARCHAR(64)  NULL,
+  company    VARCHAR(255) NULL,
+  industry   VARCHAR(255) NULL,
+  country    VARCHAR(128) NULL,
+  message    VARCHAR(1000) NULL,
+  estimate_user INT NULL,
+  trial_days INT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_clients_email (email)
+) ENGINE=InnoDB;
 
--- seed สินค้าทดลองใช้งาน
+-- client_credentials
+CREATE TABLE IF NOT EXISTS client_credentials (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  client_id INT NOT NULL,
+  username VARCHAR(100) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_client_credentials_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_client_username (username)
+) ENGINE=InnoDB;
+
+-- trial_requests
+CREATE TABLE IF NOT EXISTS trial_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  first_name   VARCHAR(100) NOT NULL,
+  last_name    VARCHAR(100) NOT NULL,
+  email        VARCHAR(255) NOT NULL,
+  phone        VARCHAR(64)  NULL,
+  company      VARCHAR(255) NOT NULL,
+  industry     VARCHAR(255) NULL,
+  country      VARCHAR(128) NOT NULL,
+  job_title    VARCHAR(255) NULL,
+  message      VARCHAR(1000) NULL,
+  utm          TEXT NULL,
+  created_at   TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_trial_email (email)
+) ENGINE=InnoDB;
+
+-- deploy/mariadb-init.sql (เพิ่มตาราง licenses)
+CREATE TABLE IF NOT EXISTS licenses (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  client_id INT NOT NULL,
+  license_key VARCHAR(64) NOT NULL UNIQUE,
+  term VARCHAR(32) NOT NULL DEFAULT 'trial',            -- trial | subscription | perpetual
+  product_sku VARCHAR(64) NULL,
+  duration_days INT NULL,
+  max_activations INT NOT NULL DEFAULT 1,
+  activations_used INT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',         -- active | revoked | expired
+  issued_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NULL,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_licenses_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);
+
+-- seed
 INSERT INTO products (sku, name, term, duration_months, max_activations)
 SELECT 'SMART_AUDIT_TRIAL', 'Smart Audit (Free Trial)', 'subscription', 1, 1
 WHERE NOT EXISTS (SELECT 1 FROM products WHERE sku='SMART_AUDIT_TRIAL');
