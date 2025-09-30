@@ -1,11 +1,11 @@
-#from sqlalchemy import Column, Integer, String, TIMESTAMP
-#from sqlalchemy.dialects.mysql import ENUM as MYSQL_ENUM
+#from sqlalchemy import Column, Integer, String, TIMESTAMP, Enum as SAEnum
 #from database import Base
 #
 #class Client(Base):
 #    __tablename__ = "clients"
+#
 #    id = Column(Integer, primary_key=True)
-#    request_type = Column(MYSQL_ENUM('trial','purchase','support'), nullable=False)
+#    request_type = Column(SAEnum("trial", "purchase", "support", name="client_request_type", native_enum=False), nullable=False)
 #    source = Column(String(32))
 #    source_id = Column(String(64))
 #
@@ -22,8 +22,8 @@
 #
 #    created_at = Column(TIMESTAMP, nullable=True)
 
+# models/client.py
 from sqlalchemy import Column, Integer, String, TIMESTAMP, Enum as SAEnum
-
 from database import Base
 
 class Client(Base):
@@ -46,4 +46,6 @@ class Client(Base):
     trial_days    = Column(Integer)
 
     created_at = Column(TIMESTAMP, nullable=True)
+
+
 

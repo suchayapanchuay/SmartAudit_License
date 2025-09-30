@@ -88,6 +88,10 @@ from routes.order_route import router as order_router
 from routes.admin_notify import router as admin_stream_router
 from routes.debug_seed import router as debug_router
 from routes.client_route import router as client_router
+from routes.license_route import router as license_router
+from routes.email_template_route import router as email_template_router
+# ...
+
 
 # events loop capture
 import asyncio
@@ -148,6 +152,8 @@ app.include_router(order_router)
 app.include_router(admin_stream_router)
 app.include_router(debug_router)
 app.include_router(client_router)
+app.include_router(license_router)
+app.include_router(email_template_router)
 
 @app.get("/health")
 def health():

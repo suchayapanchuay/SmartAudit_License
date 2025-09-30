@@ -24,3 +24,9 @@ python-jose[cryptography]==3.3.0
 pydantic[email]
 requestsrequests==2.32.5
 sse-starlette==2.1.0  
+pydantic>=2.0
+pydantic-settings>=2.0
+
+pydantic==2.11.8
+pydantic-settings==2.11.0
+pydantic_core==2.33.2

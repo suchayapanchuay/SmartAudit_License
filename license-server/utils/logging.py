@@ -1,10 +1,13 @@
-# utils/logging.py
-
-from models.activity_log import ActivityLog
+# license-server/utils/logging.py
+from datetime import datetime
 from sqlalchemy.orm import Session
+from models.activity_log import ActivityLog
 
-def log_action(db: Session, action: str):
-    log = ActivityLog(action=action)
-    db.add(log)
+def log_action(db: Session, action: str, meta: str | None = None):
+    obj = ActivityLog(
+        action=action,
+        meta=meta,
+        created_at=datetime.utcnow(),
+    )
+    db.add(obj)
     db.commit()
-

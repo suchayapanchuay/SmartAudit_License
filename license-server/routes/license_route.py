@@ -1,111 +1,124 @@
-from fastapi import APIRouter, Depends, HTTPException
+# license-server/routes/license_route.py
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-import random, string
 from typing import List, Optional
+import secrets
+import string
 
 from database import get_db
 from models.license import License
-
-
 from utils.logging import log_action
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["licenses"])
 
-def generate_license_key():
-    return '-'.join(''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(4))
+ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # ตัด 1, I, O, 0
+def generate_license_key(groups: int = 4, chars_per_group: int = 5) -> str:
+    def chunk():
+        return "".join(secrets.choice(ALPHABET) for _ in range(chars_per_group))
+    return "-".join(chunk() for _ in range(groups))
 
+# ---------- Schemas ----------
 class LicenseCreateRequest(BaseModel):
-    product_name: str
-    license_type_id: Optional[int] = None
-    user_id: Optional[int] = None
-    duration_days: int = 30
-    max_activations: int = 3
-
-class LicenseCreateResponse(BaseModel):
-    license_key: str
-    product_name: str
-    expire_date: datetime
-    status: str
+    client_id: int
+    term: str = "trial"                # trial | subscription | perpetual
+    product_sku: Optional[str] = None
+    duration_days: Optional[int] = 30  # ใช้กับ trial/subscription
+    max_activations: int = 1
 
 class LicenseOut(BaseModel):
     id: int
+    client_id: int
     license_key: str
-    product_name: str
-    user_id: Optional[int]
-    license_type_id: Optional[int]
-    issued_date: datetime
-    expire_date: datetime
+    term: str
+    product_sku: Optional[str] = None
+    duration_days: Optional[int] = None
     max_activations: int
-    activations: int
+    activations_used: int
     status: str
-    created_at: datetime
-    updated_at: datetime
+    issued_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
 
-@router.post("/license", response_model=LicenseCreateResponse)
+# ---------- Create ----------
+@router.post("/licenses", response_model=LicenseOut)
 def create_license(req: LicenseCreateRequest, db: Session = Depends(get_db)):
-    if not req.product_name:
-        raise HTTPException(status_code=400, detail="product_name is required")
-
-    # สร้าง license key ที่ไม่ซ้ำ
+    # unique key
     for _ in range(5):
         license_key = generate_license_key()
-        existing = db.query(License).filter(License.license_key == license_key).first()
-        if not existing:
+        if not db.query(License).filter(License.license_key == license_key).first():
             break
     else:
         raise HTTPException(status_code=500, detail="Failed to generate unique license key")
 
     now = datetime.utcnow()
-    expire = now + timedelta(days=req.duration_days)
+    expires = None
+    duration = None
 
-    license = License(
+    term = req.term or "trial"
+    if term == "trial":
+        duration = req.duration_days or 15
+        expires = now + timedelta(days=duration)
+    elif term == "subscription":
+        duration = req.duration_days or 30
+        expires = now + timedelta(days=duration)
+    else:
+        # perpetual
+        duration = None
+        expires = None
+
+    lic = License(
+        client_id=req.client_id,
         license_key=license_key,
-        product_name=req.product_name,
-        user_id=req.user_id,
-        license_type_id=req.license_type_id,
-        issued_date=now,
-        expire_date=expire,
+        term=term,
+        product_sku=req.product_sku,
+        duration_days=duration,
         max_activations=req.max_activations,
-        activations=0,
+        activations_used=0,
         status="active",
+        issued_at=now,
+        expires_at=expires,
         created_at=now,
-        updated_at=now,
     )
-
-    db.add(license)
+    db.add(lic)
     db.commit()
-    db.refresh(license)
+    db.refresh(lic)
 
-    # ✅ บันทึกกิจกรรม
-    log_action(db, f"สร้าง License สำหรับ {license.product_name} ให้ user {license.user_id}")
+    log_action(db, f"create license {lic.license_key} for client {lic.client_id}")
+    return lic
 
-    return LicenseCreateResponse(
-        license_key=license.license_key,
-        product_name=license.product_name,
-        expire_date=license.expire_date,
-        status=license.status
-    )
-
+# ---------- List (optional filter by clientId) ----------
 @router.get("/licenses", response_model=List[LicenseOut])
-def get_licenses(db: Session = Depends(get_db)):
-    licenses = db.query(License).all()
-    return licenses
+def list_licenses(
+    db: Session = Depends(get_db),
+    clientId: Optional[int] = Query(None),
+):
+    q = db.query(License)
+    if clientId:
+        q = q.filter(License.client_id == clientId)
+    return q.order_by(License.id.desc()).all()
 
-@router.delete("/license/{license_id}")
+# ---------- Get by id ----------
+@router.get("/licenses/{license_id}", response_model=LicenseOut)
+def get_license(license_id: int, db: Session = Depends(get_db)):
+    lic = db.query(License).filter(License.id == license_id).first()
+    if not lic:
+        raise HTTPException(status_code=404, detail="License not found")
+    return lic
+
+# ---------- Delete ----------
+@router.delete("/licenses/{license_id}")
 def delete_license(license_id: int, db: Session = Depends(get_db)):
-    license = db.query(License).filter(License.id == license_id).first()
-    if not license:
+    lic = db.query(License).filter(License.id == license_id).first()
+    if not lic:
         raise HTTPException(status_code=404, detail="License not found")
 
-    db.delete(license)
+    db.delete(lic)
     db.commit()
+    log_action(db, f"delete license {license_id}")
 
-    # ✅ บันทึกกิจกรรม
-    log_action(db, f"ลบ License {license.license_key} ของ user {license.user_id}")
-
-    return {"message": "License deleted successfully"}
+    return {"ok": True}
