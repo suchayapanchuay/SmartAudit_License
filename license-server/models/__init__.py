@@ -3,7 +3,8 @@ from .client import Client
 from .client_credential import ClientCredential
 from .license import License
 from .trial_request import TrialRequest
-from .order import Order            
+from .order import Order  
+from models.email_templates import EmailTemplate          
 
 __all__ = [
     "Client",
@@ -11,7 +12,6 @@ __all__ = [
     "License",
     "TrialRequest",
     "Order",
+    "EmailTemplate",
 ]
-
-
-from .order import Order            
+        

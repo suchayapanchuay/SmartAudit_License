@@ -25,6 +25,11 @@ class EmailTemplatePatch(BaseModel):
     status: Optional[str] = None
     is_html: Optional[bool] = None
 
+# --- replace this whole class (Pydantic v2) ---
+from datetime import datetime
+from pydantic import BaseModel
+from pydantic import ConfigDict  # v2
+
 class EmailTemplateOut(BaseModel):
     id: int
     slug: str
@@ -33,11 +38,13 @@ class EmailTemplateOut(BaseModel):
     body: str
     status: str
     is_html: bool
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
-    class Config:
-        orm_mode = True
+    # v2 style (แทน orm_mode)
+    model_config = ConfigDict(from_attributes=True)
+# --- end replace ---
+
 
 # -------- CRUD --------
 @router.get("", response_model=List[EmailTemplateOut])

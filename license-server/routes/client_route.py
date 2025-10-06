@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from datetime import datetime, timedelta
 from passlib.hash import bcrypt
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from database import get_db
 from models.client import Client
@@ -145,8 +145,7 @@ def create_client(
         expires_at = now + timedelta(days=duration_days)
 
     elif body.requestType == "purchase":
-        # ✅ ให้ผู้ใช้ถือ license 1 ปี พร้อมระบุ productSku เพื่อให้ UI แสดง
-        term = "purchase"                   # หมายเหตุ: ถ้า Enum เดิมไม่มีค่า 'purchase' ให้ดู models/license.py ด้านล่าง
+        term = "purchase"
         product_sku = "SMART_AUDIT_FULL"
         duration_days = 365
         expires_at = now + timedelta(days=365)
@@ -268,12 +267,16 @@ class ClientListItem(BaseModel):
 def list_clients(
     db: Session = Depends(get_db),
     q: Optional[str] = Query(None),
-    type: Optional[str] = Query(None, regex="^(trial|purchase|support)$"),
+    email: Optional[EmailStr] = Query(None),   # ✅ exact email filter
+    type: Optional[Literal["trial","purchase","support"]] = Query(None),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     qry = db.query(Client)
-    if q:
+
+    if email:
+        qry = qry.filter(Client.email == str(email))
+    elif q:
         kw = f"%{q.strip()}%"
         qry = qry.filter(or_(
             Client.first_name.ilike(kw),
@@ -281,6 +284,7 @@ def list_clients(
             Client.email.ilike(kw),
             Client.company.ilike(kw),
         ))
+
     if type:
         qry = qry.filter(Client.request_type == type)
 
@@ -311,13 +315,22 @@ def get_client(client_id: int, db: Session = Depends(get_db)):
 # ---------- LICENSES BY CLIENT ----------
 @router.get("/clients/{client_id}/licenses")
 def get_client_licenses(client_id: int, db: Session = Depends(get_db)):
-    rows = db.query(License).filter(License.client_id == client_id).order_by(License.id.desc()).all()
+    exists = db.query(Client.id).filter(Client.id == client_id).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    rows = (
+        db.query(License)
+        .filter(License.client_id == client_id)
+        .order_by(License.id.desc())
+        .all()
+    )
     return [
         {
             "id": lic.id,
             "licenseKey": lic.license_key,
-            "type": lic.term,                                       # "trial" | "purchase" | "support"
-            "productSku": lic.product_sku or "-",                   # ▶ ไม่ให้ว่าง
+            "type": lic.term,
+            "productSku": lic.product_sku or "-",
             "issuedAt": lic.issued_at.isoformat() if lic.issued_at else None,
             "expiresAt": lic.expires_at.isoformat() if lic.expires_at else None,
             "status": lic.status,
@@ -340,8 +353,6 @@ def delete_client(client_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "message": f"Client {client_id} deleted"}
 
 # ===== UPDATE =====
-from typing import Any, Dict
-
 class ProfilePatch(BaseModel):
     firstName: Optional[str] = None
     lastName: Optional[str] = None
@@ -416,3 +427,126 @@ def update_client(client_id: int, body: ClientPatchIn, db: Session = Depends(get
     # latest license for response
     lic = db.query(License).filter(License.client_id == client_id).order_by(License.id.desc()).first()
     return _to_out(c, lic)
+
+# =========================
+#     CREDENTIALS APIs
+# =========================
+
+def _gen_password(length: int = 12) -> str:
+    import secrets, string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+def _unique_username(db: Session, base: str) -> str:
+    base = (base or "user").strip()[:100] or "user"
+    username, i = base, 1
+    while db.query(ClientCredential).filter(ClientCredential.username == username).first():
+        i += 1
+        username = f"{base}{i}"
+    return username
+
+class CredOut(BaseModel):
+    client_id: int
+    username: str
+    created_at: Optional[datetime] = None
+
+class ResetIn(BaseModel):
+    length: int = 12
+    send_email: bool = True
+    email_to: Optional[EmailStr] = None
+    notify_subject: Optional[str] = None
+    notify_body_text: Optional[str] = None
+    notify_body_html: Optional[str] = None
+
+class ResetOut(BaseModel):
+    client_id: int
+    username: str
+    temporary_password: str
+
+@router.get("/clients/{client_id}/credentials", response_model=CredOut)
+def get_credential(client_id: int, db: Session = Depends(get_db)):
+    cred = db.query(ClientCredential).filter(ClientCredential.client_id == client_id).first()
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return CredOut(client_id=cred.client_id, username=cred.username, created_at=cred.created_at)
+
+@router.post("/clients/{client_id}/credentials/reset", response_model=ResetOut)
+def reset_password(
+    client_id: int,
+    body: ResetIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    cred = db.query(ClientCredential).filter(ClientCredential.client_id == client_id).first()
+    if not cred:
+        # auto-provision ถ้าไม่มี credential
+        base_username = (client.email.split("@")[0] if client.email else f"User{client_id}")
+        cred = ClientCredential(
+            client_id=client_id,
+            username=_unique_username(db, base_username),
+            password_hash=bcrypt.hash(_gen_password(10)),
+            created_at=datetime.utcnow(),
+        )
+        db.add(cred)
+        db.flush()
+
+    # สร้าง temp password ใหม่
+    length = max(8, min(64, body.length or 12))
+    temp_pwd = _gen_password(length)
+    cred.password_hash = bcrypt.hash(temp_pwd)
+    db.commit()
+
+    # ส่งอีเมลแจ้งผู้ใช้ (ถ้าระบุ)
+    if body.send_email:
+        to_email = body.email_to or client.email
+        if to_email:
+            subject = body.notify_subject or f"Your {settings.APP_NAME} account password has been reset"
+            default_text = (
+                f"Hello {client.first_name or ''},\n\n"
+                f"A temporary password has been generated for your account.\n\n"
+                f"Username: {cred.username}\n"
+                f"Temporary password: {temp_pwd}\n\n"
+                f"Login: {settings.PORTAL_URL}\n"
+                f"Please log in and change your password immediately.\n"
+            )
+            if body.notify_body_html:
+                html = body.notify_body_html.replace("{{username}}", cred.username).replace("{{password}}", temp_pwd)
+                text = (body.notify_body_text or default_text).replace("{{username}}", cred.username).replace("{{password}}", temp_pwd)
+                background.add_task(send_email, to_email, subject, html, True, text)
+            else:
+                text = (body.notify_body_text or default_text).replace("{{username}}", cred.username).replace("{{password}}", temp_pwd)
+                background.add_task(send_email, to_email, subject, text, False, None)
+
+    return ResetOut(client_id=client_id, username=cred.username, temporary_password=temp_pwd)
+
+# --- DEBUG EMAIL ENDPOINTS ---
+class TestEmailIn(BaseModel):
+    to: EmailStr
+    subject: str = "SMTP direct test"
+    body: str = "<h3>Hello</h3> SMTP test"
+    is_html: bool = True
+
+@router.get("/_debug/email/config")
+def debug_email_config():
+    # อย่าระบุ password ออกมา
+    return {
+        "EMAIL_ENABLED": getattr(settings, "EMAIL_ENABLED", None),
+        "SMTP_HOST": getattr(settings, "SMTP_HOST", None),
+        "SMTP_PORT": getattr(settings, "SMTP_PORT", None),
+        "SMTP_USE_TLS": getattr(settings, "SMTP_USE_TLS", None),
+        "SMTP_USERNAME": getattr(settings, "SMTP_USERNAME", None),
+        "SMTP_FROM": getattr(settings, "SMTP_FROM", None),
+        "SMTP_DEBUG": getattr(settings, "SMTP_DEBUG", None),
+    }
+
+@router.post("/_debug/email/send")
+def debug_email_send(body: TestEmailIn):
+    try:
+        ok = send_email(body.to, body.subject, body.body, is_html=body.is_html)
+        return {"ok": ok}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")

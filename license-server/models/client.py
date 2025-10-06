@@ -25,6 +25,7 @@
 # models/client.py
 from sqlalchemy import Column, Integer, String, TIMESTAMP, Enum as SAEnum
 from database import Base
+from sqlalchemy.orm import relationship
 
 class Client(Base):
     __tablename__ = "clients"
@@ -46,6 +47,7 @@ class Client(Base):
     trial_days    = Column(Integer)
 
     created_at = Column(TIMESTAMP, nullable=True)
+    credential = relationship("ClientCredential", uselist=False, back_populates="client")
 
 
 
