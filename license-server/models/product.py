@@ -1,28 +1,16 @@
-#from sqlalchemy import Column, Integer, String, Enum, TIMESTAMP
-#from sqlalchemy.sql import func
-#from database import Base
-#
-#class Product(Base):
-#    __tablename__ = "products"
-#    id = Column(Integer, primary_key=True, autoincrement=True)
-#    sku = Column(String(64), unique=True, index=True, nullable=False)
-#    name = Column(String(255), nullable=False)
-#    term = Column(Enum('perpetual', 'subscription'), nullable=False, default='subscription')
-#    duration_months = Column(Integer)
-#    max_activations = Column(Integer, nullable=False, default=1)
-#    created_at = Column(TIMESTAMP, server_default=func.now())
-
-from sqlalchemy import Column, Integer, String, TIMESTAMP
-from sqlalchemy.dialects.mysql import ENUM as MYSQL_ENUM
+# models/product.py
+from sqlalchemy import Column, Integer, String, Text, Boolean, TIMESTAMP
+from sqlalchemy.dialects.mysql import JSON as MYSQL_JSON
 from database import Base
 
 class Product(Base):
     __tablename__ = "products"
-    id = Column(Integer, primary_key=True)
-    sku = Column(String(64), nullable=False, unique=True)
-    name = Column(String(255), nullable=False)
-    term = Column(MYSQL_ENUM('perpetual','subscription'), nullable=False, default="subscription")
-    duration_months = Column(Integer)
-    max_activations = Column(Integer, nullable=False, default=1)
-    created_at = Column(TIMESTAMP, nullable=True)
 
+    id = Column(Integer, primary_key=True)
+    sku = Column(String(64), nullable=True, unique=True)        # optional
+    name = Column(String(255), nullable=False, unique=True)
+    category = Column(String(100), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    description = Column(Text, nullable=True)
+    meta = Column(MYSQL_JSON, nullable=True)                    # version / licensePolicy / constraints
+    created_at = Column(TIMESTAMP, nullable=True)

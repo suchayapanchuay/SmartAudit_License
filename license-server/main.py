@@ -16,6 +16,10 @@ from routes.license_route import router as license_router
 from routes.email_template_route import router as email_template_router
 from routes.credentials import router as credentials
 from routes.auth_route import router as auth_router
+from routes.products import router as products_router
+from routes.admin_users import router as admin_users_router
+from routes.dashboard_route import router as dashboard_router
+from routes.reports_route import router as reports_router
 
 # events loop capture
 import asyncio
@@ -87,6 +91,10 @@ app.include_router(license_router)
 app.include_router(email_template_router)
 app.include_router(credentials)
 app.include_router(auth_router)
+app.include_router(products_router)
+app.include_router(admin_users_router)
+app.include_router(dashboard_router)
+app.include_router(reports_router)
 
 @app.get("/health")
 def health():

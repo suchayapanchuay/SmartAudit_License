@@ -1,16 +1,29 @@
 CREATE DATABASE IF NOT EXISTS smartaudit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE smartaudit;
 
--- products
-CREATE TABLE IF NOT EXISTS products (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  sku VARCHAR(64) NOT NULL UNIQUE,
-  name VARCHAR(255) NOT NULL,
-  term ENUM('perpetual','subscription') NOT NULL DEFAULT 'subscription',
-  duration_months INT NULL,
-  max_activations INT NOT NULL DEFAULT 1,
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+--products
+-- CREATE TABLE IF NOT EXISTS products (
+  -- id INT AUTO_INCREMENT PRIMARY KEY,
+  -- sku VARCHAR(64) NOT NULL UNIQUE,
+  -- name VARCHAR(255) NOT NULL,
+  -- term ENUM('perpetual','subscription') NOT NULL DEFAULT 'subscription',
+  -- duration_months INT NULL,
+  -- max_activations INT NOT NULL DEFAULT 1,
+  -- created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+-- ) ENGINE=InnoDB;
+
+--DROP TABLE IF EXISTS products;
+CREATE TABLE products (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  sku             VARCHAR(64) NULL UNIQUE,            -- อนุญาตว่างได้ (หน้า UI ส่ง null ได้)
+  name            VARCHAR(255) NOT NULL UNIQUE,       -- กันชื่อซ้ำด้วย
+  category        VARCHAR(100) NULL,
+  is_active       TINYINT(1) NOT NULL DEFAULT 1,
+  description     TEXT NULL,
+  meta            JSON NULL,                          -- เก็บ version, licensePolicy, constraints ฯลฯ
+  created_at      TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- customers
 CREATE TABLE IF NOT EXISTS customers (
