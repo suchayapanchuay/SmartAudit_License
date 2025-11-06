@@ -4,8 +4,9 @@ from .client_credential import ClientCredential
 from .license import License
 from .trial_request import TrialRequest
 from .order import Order  
-from models.email_templates import EmailTemplate       
+from .email_templates import EmailTemplate       
 from .product import Product   
+from .api_key import ApiKey
 
 __all__ = [
     "Client",
@@ -15,5 +16,6 @@ __all__ = [
     "Order",
     "EmailTemplate",
     "Product",
+    "ApiKey"
 ]
         

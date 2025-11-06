@@ -113,7 +113,50 @@ CREATE TABLE IF NOT EXISTS licenses (
   CONSTRAINT fk_licenses_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id               BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name             VARCHAR(255) NOT NULL,
+  key_prefix       VARCHAR(16)  NOT NULL,     -- เช่น "sak_live"
+  key_last4        CHAR(4)      NOT NULL,     -- ใช้ช่วยค้นเจอเร็วขึ้นเวลาแสดง
+  key_hash         CHAR(64)     NOT NULL,     -- SHA-256 hex ของคีย์ทั้งเส้น
+  scopes_json      JSON         NOT NULL,     -- ["issue_license","verify_license",...]
+  status           ENUM('active','inactive','revoked') NOT NULL DEFAULT 'active',
+  expires_at       DATETIME NULL,
+  last_used_at     DATETIME NULL,
+  created_by       VARCHAR(255) NULL,         -- อีเมล/ไอดีแอดมินผู้สร้าง
+  created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS api_key_usage (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  api_key_id  BIGINT NOT NULL,
+  method      VARCHAR(8) NOT NULL,
+  path        VARCHAR(512) NOT NULL,
+  status_code INT NOT NULL,
+  ip_addr     VARCHAR(64) NULL,
+  used_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE INDEX idx_api_keys_prefix_last4 ON api_keys(key_prefix, key_last4);
+CREATE INDEX idx_api_keys_status ON api_keys(status);
+
+
 CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  actor        VARCHAR(255) NOT NULL,         -- email/username ของ admin
+  action       VARCHAR(64)  NOT NULL,         -- เช่น api_key.created, api_key.revoked, login
+  target_type  VARCHAR(64)  NULL,             -- เช่น api_key
+  target_id    INT          NULL,             -- id ของ resource
+  message      VARCHAR(512) NULL,             -- ข้อความสรุป
+  ip           VARCHAR(64)  NULL,
+  user_agent   VARCHAR(255) NULL,
+  meta_json    JSON         NULL,             -- เก็บ extra (เช่น scopes, status, mask)
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
 
 -- seed
 INSERT INTO products (sku, name, term, duration_months, max_activations)

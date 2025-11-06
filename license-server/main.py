@@ -20,7 +20,9 @@ from routes.products import router as products_router
 from routes.admin_users import router as admin_users_router
 from routes.dashboard_route import router as dashboard_router
 from routes.reports_route import router as reports_router
-
+from routes.admin_api_keys import router as api_router
+from routes.health import router as health_router
+from routes.admin_activity_logs import router as activity_router
 # events loop capture
 import asyncio
 from utils.events import set_main_loop
@@ -95,6 +97,9 @@ app.include_router(products_router)
 app.include_router(admin_users_router)
 app.include_router(dashboard_router)
 app.include_router(reports_router)
+app.include_router(api_router)
+app.include_router(health_router)
+app.include_router(activity_router)
 
 @app.get("/health")
 def health():
