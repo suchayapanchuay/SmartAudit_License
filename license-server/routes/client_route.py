@@ -1,10 +1,11 @@
+# client_route.py
+from datetime import datetime, timedelta
+from typing import List, Optional, Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from datetime import datetime, timedelta
-from passlib.hash import bcrypt
-from typing import List, Optional, Literal
+from sqlalchemy.orm import Session
 
 from database import get_db
 from models.client import Client
@@ -15,10 +16,15 @@ from utils.license_key import generate_license_key
 from utils.template_renderer import render_template
 from utils.mailer import send_email
 from utils.settings import settings
+from utils.passwords import hash_password  # ✅ ใช้ฟังก์ชันกันเคส >72 bytes
 
 router = APIRouter(prefix="/api", tags=["clients"])
 
-# ---------- Schemas (input) ----------
+# =========================
+#          SCHEMAS
+# =========================
+
+# ---------- input ----------
 class ProfileIn(BaseModel):
     firstName: str
     lastName: str
@@ -38,7 +44,7 @@ class TrialIn(BaseModel):
     days: Optional[int] = None
 
 class ClientCreateIn(BaseModel):
-    requestType: str  # "trial" | "purchase" | "support"
+    requestType: Literal["trial", "purchase", "support"]
     search: Optional[str] = None
     source: Optional[str] = None
     sourceId: Optional[str] = None
@@ -46,7 +52,7 @@ class ClientCreateIn(BaseModel):
     credentials: CredIn
     trial: TrialIn
 
-# ---------- Schemas (output) ----------
+# ---------- output ----------
 class ClientOut(BaseModel):
     id: int
     requestType: str
@@ -64,6 +70,7 @@ class ClientOut(BaseModel):
     createdAt: Optional[str] = None
     licenseKey: Optional[str] = None
     licenseExpiresAt: Optional[str] = None
+
 
 def _to_out(c: Client, lic: Optional[License] = None) -> ClientOut:
     return ClientOut(
@@ -83,16 +90,16 @@ def _to_out(c: Client, lic: Optional[License] = None) -> ClientOut:
         licenseExpiresAt=(lic.expires_at.isoformat() if (lic and lic.expires_at) else None),
     )
 
-# ---------- CREATE ----------
+# =========================
+#          CREATE
+# =========================
+
 @router.post("/clients", response_model=ClientOut)
 def create_client(
     body: ClientCreateIn,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    if body.requestType not in {"trial", "purchase", "support"}:
-        raise HTTPException(status_code=400, detail=f"Invalid requestType: '{body.requestType}'")
-
     # duplicates
     if db.query(Client).filter(Client.email == body.profile.email).first():
         raise HTTPException(status_code=409, detail="Email already exists")
@@ -119,48 +126,45 @@ def create_client(
         created_at=now,
     )
     db.add(client)
-    db.flush()
+    db.flush()  # ได้ client.id ก่อน
 
+    # credentials
     plain_pw = body.credentials.password
     cred = ClientCredential(
         client_id=client.id,
         username=body.credentials.username,
-        password_hash=bcrypt.hash(plain_pw),
+        password_hash=hash_password(plain_pw),  # ✅
         created_at=now,
     )
     db.add(cred)
 
-    # issue license
+    # license decision
     license_key = generate_license_key()
 
-    term: str
-    product_sku: Optional[str]
-    duration_days: Optional[int]
-    expires_at: Optional[datetime]
+    req = body.requestType  # 'trial' | 'purchase' | 'support'
+    term = req
+    product_sku: Optional[str] = None
+    duration_days: Optional[int] = None
+    expires_at: Optional[datetime] = None
 
-    if body.requestType == "trial":
-        term = "trial"
+    if req == "trial":
         product_sku = "SMART_AUDIT_TRIAL"
         duration_days = body.trial.days or 15
         expires_at = now + timedelta(days=duration_days)
-
-    elif body.requestType == "purchase":
-        term = "purchase"
+    elif req == "purchase":
         product_sku = "SMART_AUDIT_FULL"
         duration_days = 365
         expires_at = now + timedelta(days=365)
-
     else:  # support
-        term = "support"
-        product_sku = "SMART_AUDIT_SUPPORT"
+        product_sku = None
         duration_days = None
         expires_at = None
 
     lic = License(
         client_id=client.id,
         license_key=license_key,
-        term=term,
-        product_sku=product_sku,
+        term=term,                       # เก็บค่าตาม requestType
+        product_sku=product_sku,         # อาจเป็น None (support)
         duration_days=duration_days,
         max_activations=1,
         activations_used=0,
@@ -170,7 +174,14 @@ def create_client(
         created_at=now,
     )
     db.add(lic)
-    db.commit()
+
+    # commit with rollback guard
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"DB Commit failed: {type(e).__name__}: {e}")
+
     db.refresh(client)
     db.refresh(lic)
 
@@ -201,11 +212,16 @@ def create_client(
         }
     }
 
-    tpl = (
-        db.query(EmailTemplate)
-        .filter(EmailTemplate.slug == "welcome", EmailTemplate.status != "Disabled")
-        .first()
-    )
+    # read template (กันล้ม ถ้าตารางยังไม่มา)
+    tpl = None
+    try:
+        tpl = (
+            db.query(EmailTemplate)
+            .filter(EmailTemplate.slug == "welcome", EmailTemplate.status != "Disabled")
+            .first()
+        )
+    except Exception:
+        tpl = None
 
     if tpl:
         subject = render_template(tpl.subject, vars_map)
@@ -231,29 +247,24 @@ Login: {vars_map['meta']['portal_url']}
 """.strip()
         is_html = False
 
+    # send email
     if is_html:
         background.add_task(
-            send_email,
-            client.email,
-            subject,
-            body_rendered,
-            is_html=True,
-            text_fallback="Please open with an HTML-capable email client."
+            send_email, client.email, subject, body_rendered, True,
+            "Please open with an HTML-capable email client."
         )
     else:
         html_pre = f"<pre style='font-family:ui-monospace,Menlo,Consolas,monospace'>{body_rendered}</pre>"
         background.add_task(
-            send_email,
-            client.email,
-            subject,
-            html_pre,
-            is_html=True,
-            text_fallback=body_rendered
+            send_email, client.email, subject, html_pre, True, body_rendered
         )
 
     return _to_out(client, lic)
 
-# ---------- LIST ----------
+# =========================
+#           LIST
+# =========================
+
 class ClientListItem(BaseModel):
     id: int
     firstName: str
@@ -267,7 +278,7 @@ class ClientListItem(BaseModel):
 def list_clients(
     db: Session = Depends(get_db),
     q: Optional[str] = Query(None),
-    email: Optional[EmailStr] = Query(None),   # ✅ exact email filter
+    email: Optional[EmailStr] = Query(None),   # exact email filter
     type: Optional[Literal["trial","purchase","support"]] = Query(None),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -302,17 +313,28 @@ def list_clients(
         for c in rows
     ]
 
-# ---------- GET BY ID ----------
+# =========================
+#          GET BY ID
+# =========================
+
 @router.get("/clients/{client_id}", response_model=ClientOut)
 def get_client(client_id: int, db: Session = Depends(get_db)):
     c = db.query(Client).filter(Client.id == client_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    lic = db.query(License).filter(License.client_id == client_id).order_by(License.id.desc()).first()
+    lic = (
+        db.query(License)
+        .filter(License.client_id == client_id)
+        .order_by(License.id.desc())
+        .first()
+    )
     return _to_out(c, lic)
 
-# ---------- LICENSES BY CLIENT ----------
+# =========================
+#     LICENSES BY CLIENT
+# =========================
+
 @router.get("/clients/{client_id}/licenses")
 def get_client_licenses(client_id: int, db: Session = Depends(get_db)):
     exists = db.query(Client.id).filter(Client.id == client_id).first()
@@ -338,7 +360,10 @@ def get_client_licenses(client_id: int, db: Session = Depends(get_db)):
         for lic in rows
     ]
 
-# ---------- DELETE ----------
+# =========================
+#          DELETE
+# =========================
+
 @router.delete("/clients/{client_id}")
 def delete_client(client_id: int, db: Session = Depends(get_db)):
     client = db.query(Client).filter(Client.id == client_id).first()
@@ -352,7 +377,10 @@ def delete_client(client_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "message": f"Client {client_id} deleted"}
 
-# ===== UPDATE =====
+# =========================
+#           UPDATE
+# =========================
+
 class ProfilePatch(BaseModel):
     firstName: Optional[str] = None
     lastName: Optional[str] = None
@@ -408,7 +436,7 @@ def update_client(client_id: int, body: ClientPatchIn, db: Session = Depends(get
         if body.credentials.username is not None:
             cred.username = body.credentials.username
         if body.credentials.password:
-            cred.password_hash = bcrypt.hash(body.credentials.password)
+            cred.password_hash = hash_password(body.credentials.password)  # ✅
 
     # update license if requestType == trial and trial.days provided
     if body.trial and body.trial.days is not None:
@@ -425,11 +453,16 @@ def update_client(client_id: int, body: ClientPatchIn, db: Session = Depends(get
     db.commit()
 
     # latest license for response
-    lic = db.query(License).filter(License.client_id == client_id).order_by(License.id.desc()).first()
+    lic = (
+        db.query(License)
+        .filter(License.client_id == client_id)
+        .order_by(License.id.desc())
+        .first()
+    )
     return _to_out(c, lic)
 
 # =========================
-#     CREDENTIALS APIs
+#       CREDENTIAL APIs
 # =========================
 
 def _gen_password(length: int = 12) -> str:
@@ -483,12 +516,11 @@ def reset_password(
 
     cred = db.query(ClientCredential).filter(ClientCredential.client_id == client_id).first()
     if not cred:
-        # auto-provision ถ้าไม่มี credential
         base_username = (client.email.split("@")[0] if client.email else f"User{client_id}")
         cred = ClientCredential(
             client_id=client_id,
             username=_unique_username(db, base_username),
-            password_hash=bcrypt.hash(_gen_password(10)),
+            password_hash=hash_password(_gen_password(10)),  # ✅
             created_at=datetime.utcnow(),
         )
         db.add(cred)
@@ -497,10 +529,10 @@ def reset_password(
     # สร้าง temp password ใหม่
     length = max(8, min(64, body.length or 12))
     temp_pwd = _gen_password(length)
-    cred.password_hash = bcrypt.hash(temp_pwd)
+    cred.password_hash = hash_password(temp_pwd)  # ✅
     db.commit()
 
-    # ส่งอีเมลแจ้งผู้ใช้ (ถ้าระบุ)
+    # ส่งอีเมลแจ้ง (ถ้าเลือก)
     if body.send_email:
         to_email = body.email_to or client.email
         if to_email:
@@ -523,7 +555,10 @@ def reset_password(
 
     return ResetOut(client_id=client_id, username=cred.username, temporary_password=temp_pwd)
 
-# --- DEBUG EMAIL ENDPOINTS ---
+# =========================
+#        DEBUG EMAIL
+# =========================
+
 class TestEmailIn(BaseModel):
     to: EmailStr
     subject: str = "SMTP direct test"

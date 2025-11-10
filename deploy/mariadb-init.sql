@@ -1,31 +1,22 @@
+-- ========= DATABASE =========
 CREATE DATABASE IF NOT EXISTS smartaudit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE smartaudit;
 
---products
--- CREATE TABLE IF NOT EXISTS products (
-  -- id INT AUTO_INCREMENT PRIMARY KEY,
-  -- sku VARCHAR(64) NOT NULL UNIQUE,
-  -- name VARCHAR(255) NOT NULL,
-  -- term ENUM('perpetual','subscription') NOT NULL DEFAULT 'subscription',
-  -- duration_months INT NULL,
-  -- max_activations INT NOT NULL DEFAULT 1,
-  -- created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
--- ) ENGINE=InnoDB;
-
---DROP TABLE IF EXISTS products;
+-- ========= PRODUCTS (รุ่นใหม่) =========
+DROP TABLE IF EXISTS products;
 CREATE TABLE products (
-  id              INT AUTO_INCREMENT PRIMARY KEY,
-  sku             VARCHAR(64) NULL UNIQUE,            -- อนุญาตว่างได้ (หน้า UI ส่ง null ได้)
-  name            VARCHAR(255) NOT NULL UNIQUE,       -- กันชื่อซ้ำด้วย
-  category        VARCHAR(100) NULL,
-  is_active       TINYINT(1) NOT NULL DEFAULT 1,
-  description     TEXT NULL,
-  meta            JSON NULL,                          -- เก็บ version, licensePolicy, constraints ฯลฯ
-  created_at      TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  sku          VARCHAR(64) NOT NULL UNIQUE,           -- ต้อง NOT NULL เพื่ออ้างอิงด้วย product_sku
+  name         VARCHAR(255) NOT NULL UNIQUE,
+  category     VARCHAR(100) NULL,
+  is_active    TINYINT(1) NOT NULL DEFAULT 1,
+  description  TEXT NULL,
+  meta         JSON NULL,                             -- เช่น {"durationDays":15,"maxActivations":1}
+  created_at   TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- customers
+-- ========= CUSTOMERS =========
 CREATE TABLE IF NOT EXISTS customers (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
@@ -33,7 +24,7 @@ CREATE TABLE IF NOT EXISTS customers (
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
--- orders
+-- ========= ORDERS =========
 CREATE TABLE IF NOT EXISTS orders (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_code VARCHAR(64) NOT NULL UNIQUE,
@@ -48,7 +39,7 @@ CREATE TABLE IF NOT EXISTS orders (
   CONSTRAINT fk_orders_product  FOREIGN KEY (product_id)  REFERENCES products(id)
 ) ENGINE=InnoDB;
 
--- clients
+-- ========= CLIENTS =========
 CREATE TABLE IF NOT EXISTS clients (
   id INT AUTO_INCREMENT PRIMARY KEY,
   request_type ENUM('trial','purchase','support') NOT NULL,
@@ -68,7 +59,7 @@ CREATE TABLE IF NOT EXISTS clients (
   UNIQUE KEY uq_clients_email (email)
 ) ENGINE=InnoDB;
 
--- client_credentials
+-- ========= CLIENT CREDENTIALS =========
 CREATE TABLE IF NOT EXISTS client_credentials (
   id INT AUTO_INCREMENT PRIMARY KEY,
   client_id INT NOT NULL,
@@ -79,7 +70,7 @@ CREATE TABLE IF NOT EXISTS client_credentials (
   UNIQUE KEY uq_client_username (username)
 ) ENGINE=InnoDB;
 
--- trial_requests
+-- ========= TRIAL REQUESTS =========
 CREATE TABLE IF NOT EXISTS trial_requests (
   id INT AUTO_INCREMENT PRIMARY KEY,
   first_name   VARCHAR(100) NOT NULL,
@@ -96,34 +87,76 @@ CREATE TABLE IF NOT EXISTS trial_requests (
   KEY idx_trial_email (email)
 ) ENGINE=InnoDB;
 
--- deploy/mariadb-init.sql (เพิ่มตาราง licenses)
-CREATE TABLE IF NOT EXISTS licenses (
+-- ========= LICENSES =========
+DROP TABLE IF EXISTS licenses;
+CREATE TABLE licenses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   client_id INT NOT NULL,
   license_key VARCHAR(64) NOT NULL UNIQUE,
-  term VARCHAR(32) NOT NULL DEFAULT 'trial',            -- trial | subscription | perpetual
-  product_sku VARCHAR(64) NULL,
+  term VARCHAR(32) NOT NULL DEFAULT 'trial',            -- trial | purchase | support | subscription | perpetual
+  product_sku VARCHAR(64) NULL,                         -- อาจ NULL ได้ (เช่น support)
   duration_days INT NULL,
   max_activations INT NOT NULL DEFAULT 1,
   activations_used INT NOT NULL DEFAULT 0,
-  status VARCHAR(16) NOT NULL DEFAULT 'active',         -- active | revoked | expired
-  issued_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  expires_at TIMESTAMP NULL,
-  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_licenses_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+  status ENUM('active','revoked','expired','inactive') NOT NULL DEFAULT 'active',
+  issued_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NULL,
+  created_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_licenses_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  INDEX idx_licenses_client_id (client_id),
+  INDEX idx_licenses_key (license_key),
+  INDEX idx_licenses_product_sku (product_sku)
 ) ENGINE=InnoDB;
 
+-- ========= EMAIL TEMPLATES =========
+CREATE TABLE IF NOT EXISTS email_templates (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  slug        VARCHAR(64)  NOT NULL UNIQUE,            -- เช่น "welcome"
+  name        VARCHAR(255) NOT NULL,                   -- ชื่ออ่านง่าย
+  subject     VARCHAR(255) NOT NULL,
+  body        MEDIUMTEXT   NOT NULL,                   -- รองรับ HTML ยาว
+  is_html     TINYINT(1)   NOT NULL DEFAULT 1,         -- 1 = HTML, 0 = Text
+  status      ENUM('Enabled','Disabled') NOT NULL DEFAULT 'Enabled',
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- SEED: welcome template (skip ถ้ามีแล้ว)
+INSERT INTO email_templates (slug, name, subject, body, is_html, status)
+SELECT 'welcome',
+       'Welcome (Default)',
+       'Your {{meta.app_name}} Account & License',
+       CONCAT(
+         '<h3>Welcome {{client.first_name}} {{client.last_name}}</h3>',
+         '<p><b>Account</b></p><ul>',
+         '<li>Email: {{client.email}}</li>',
+         '<li>Username: {{client.username}}</li>',
+         '<li>Password: {{client.plain_password}}</li>',
+         '</ul>',
+         '<p><b>License</b></p><ul>',
+         '<li>Key: {{license.license_key}}</li>',
+         '<li>Type: {{license.term}}</li>',
+         '<li>SKU: {{license.product_sku}}</li>',
+         '<li>Expires: {{license.expires_at}}</li>',
+         '</ul>',
+         '<p>Login: <a href=\"{{meta.portal_url}}\">{{meta.portal_url}}</a></p>'
+       ),
+       1,
+       'Enabled'
+WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE slug='welcome');
+
+-- ========= API KEYS =========
 CREATE TABLE IF NOT EXISTS api_keys (
   id               BIGINT AUTO_INCREMENT PRIMARY KEY,
   name             VARCHAR(255) NOT NULL,
-  key_prefix       VARCHAR(16)  NOT NULL,     -- เช่น "sak_live"
-  key_last4        CHAR(4)      NOT NULL,     -- ใช้ช่วยค้นเจอเร็วขึ้นเวลาแสดง
-  key_hash         CHAR(64)     NOT NULL,     -- SHA-256 hex ของคีย์ทั้งเส้น
-  scopes_json      JSON         NOT NULL,     -- ["issue_license","verify_license",...]
+  key_prefix       VARCHAR(16)  NOT NULL,
+  key_last4        CHAR(4)      NOT NULL,
+  key_hash         CHAR(64)     NOT NULL,
+  scopes_json      JSON         NOT NULL,
   status           ENUM('active','inactive','revoked') NOT NULL DEFAULT 'active',
   expires_at       DATETIME NULL,
   last_used_at     DATETIME NULL,
-  created_by       VARCHAR(255) NULL,         -- อีเมล/ไอดีแอดมินผู้สร้าง
+  created_by       VARCHAR(255) NULL,
   created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -138,27 +171,27 @@ CREATE TABLE IF NOT EXISTS api_key_usage (
   FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE INDEX idx_api_keys_prefix_last4 ON api_keys(key_prefix, key_last4);
-CREATE INDEX idx_api_keys_status ON api_keys(status);
-
-
-CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);
-
+-- ========= ACTIVITY LOGS =========
 CREATE TABLE IF NOT EXISTS activity_logs (
   id           INT AUTO_INCREMENT PRIMARY KEY,
-  actor        VARCHAR(255) NOT NULL,         -- email/username ของ admin
-  action       VARCHAR(64)  NOT NULL,         -- เช่น api_key.created, api_key.revoked, login
-  target_type  VARCHAR(64)  NULL,             -- เช่น api_key
-  target_id    INT          NULL,             -- id ของ resource
-  message      VARCHAR(512) NULL,             -- ข้อความสรุป
+  actor        VARCHAR(255) NOT NULL,
+  action       VARCHAR(64)  NOT NULL,
+  target_type  VARCHAR(64)  NULL,
+  target_id    INT          NULL,
+  message      VARCHAR(512) NULL,
   ip           VARCHAR(64)  NULL,
   user_agent   VARCHAR(255) NULL,
-  meta_json    JSON         NULL,             -- เก็บ extra (เช่น scopes, status, mask)
+  meta_json    JSON         NULL,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
-
--- seed
-INSERT INTO products (sku, name, term, duration_months, max_activations)
-SELECT 'SMART_AUDIT_TRIAL', 'Smart Audit (Free Trial)', 'subscription', 1, 1
+-- ========= SEED PRODUCTS =========
+INSERT INTO products (sku, name, category, is_active, meta)
+SELECT 'SMART_AUDIT_TRIAL', 'Smart Audit (Free Trial)', 'license', 1,
+       JSON_OBJECT('durationDays', 15, 'maxActivations', 1)
 WHERE NOT EXISTS (SELECT 1 FROM products WHERE sku='SMART_AUDIT_TRIAL');
+
+INSERT INTO products (sku, name, category, is_active, meta)
+SELECT 'SMART_AUDIT_FULL', 'Smart Audit (Full License)', 'license', 1,
+       JSON_OBJECT('durationDays', 365, 'maxActivations', 1)
+WHERE NOT EXISTS (SELECT 1 FROM products WHERE sku='SMART_AUDIT_FULL');
