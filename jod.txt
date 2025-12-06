@@ -1,187 +1,233 @@
-# routes/order_route.py
-from datetime import datetime
-import json
-import random
-import string
-from typing import Any, Dict, List, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, EmailStr, Field
+# routes/auth_route.py
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
+from passlib.hash import bcrypt
 
 from database import get_db
-from models.customer import Customer
-from models.product import Product
-from models.order import Order
+from models.client_credential import ClientCredential
+from models.license import License
+from models.client import Client
+from utils.jwt import create_access_token
+from utils.deps import get_current_client
+from utils.settings import settings
+from utils.passwords import hash_password
+from utils.mailer import send_email
 
-# publish เป็น no-op ถ้าไม่มี utils.events
-try:
-    from utils.events import publish  # type: ignore
-except Exception:  # pragma: no cover
-    def publish(event: str, payload: Dict[str, Any]) -> None:
-        pass
+router = APIRouter(prefix="/api", tags=["auth"])
 
-router = APIRouter(prefix="/api", tags=["orders"])
+# =========================
+#           LOGIN
+# =========================
 
-# ---------- Schemas ----------
-class OrderItemIn(BaseModel):
-    sku: Optional[str] = None
-    name: Optional[str] = None
-    qty: int = Field(default=1, ge=1)
-    price: int = Field(default=0, ge=0)
+class LoginIn(BaseModel):
+    username: str
+    password: str
 
-class OrderIn(BaseModel):
-    customer_name: Optional[str] = None
-    customer_email: EmailStr
-    company: Optional[str] = None
-    phone: Optional[str] = None
-    items: List[OrderItemIn] = []       # ← อนุญาตว่าง แล้วค่อยเติมให้
-    grand_total: int = Field(default=0, ge=0)
-    note: Optional[str] = None
-    form_type: Optional[str] = None
+class LoginOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
-class OrderOut(BaseModel):
+@router.post("/login", response_model=LoginOut)
+def login(data: LoginIn, db: Session = Depends(get_db)):
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.username == data.username)
+        .first()
+    )
+    if not cred or not bcrypt.verify(data.password, cred.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    token = create_access_token({"sub": str(cred.client_id), "username": cred.username})
+    return LoginOut(access_token=token)
+
+
+# =========================
+#             ME
+# =========================
+
+class MeOut(BaseModel):
     id: int
-    order_code: str
-    customer_email: EmailStr
-    customer_name: Optional[str]
-    company: Optional[str]
-    phone: Optional[str]
-    items: List[Dict[str, Any]]
-    grand_total: int
-    currency: str
-    status: str
-    note: Optional[str]
-    created_at: Optional[str]
+    firstName: str
+    lastName: str
+    email: str
+    company: str | None = None
+    phone: str | None = None
+    country: str | None = None
+    requestType: str
 
-def _code() -> str:
-    return "ORD-" + "".join(random.choices(string.digits, k=10))
-
-def _safe_json_loads(s: Optional[str]) -> Dict[str, Any]:
-    try:
-        return json.loads(s or "{}")
-    except Exception:
-        return {}
-
-def _to_out(o: Order) -> OrderOut:
-    meta = _safe_json_loads(o.meta)
-    return OrderOut(
-        id=o.id,
-        order_code=o.order_code,
-        customer_email=meta.get("customer_email"),
-        customer_name=meta.get("customer_name"),
-        company=meta.get("company"),
-        phone=meta.get("phone"),
-        items=meta.get("items", []),
-        grand_total=o.amount_cents,
-        currency=o.currency or "THB",
-        status=o.status,
-        note=meta.get("note"),
-        created_at=o.created_at.isoformat() if o.created_at else None,
+@router.get("/me", response_model=MeOut)
+def me(current = Depends(get_current_client)):
+    return MeOut(
+        id=current.id,
+        firstName=current.first_name or "",
+        lastName=current.last_name or "",
+        email=current.email,
+        company=current.company,
+        phone=current.phone,
+        country=current.country,
+        requestType=current.request_type,
     )
 
-# ---------- Diagnostics ----------
-@router.get("/orders/_diag")
-def orders_diag():
-    return {
-        "handler": "v2",
-        "auto_fill_items_if_empty": True,
-        "build": "2025-11-03",
-    }
 
-# ---------- Handlers ----------
-@router.post("/orders", response_model=OrderOut, status_code=201)
-def create_order_v2(body: OrderIn, db: Session = Depends(get_db), response: Response = None):
-    """
-    v2 handler: auto-fill items if empty; compatible with models.product.Product (ไม่มีฟิลด์ term/duration/max_activations)
-    """
-    # (A) เซ็น header เพื่อวินิจฉัยว่าใช้ v2 จริง
-    if response is not None:
-        response.headers["x-order-handler"] = "v2"
+# =========================
+#     MY LICENSES (CURRENT)
+# =========================
 
-    # (B) ถ้า items ว่าง ให้เติม Lead item อัตโนมัติ
-    if not body.items:
-        body.items = [OrderItemIn(sku="CONTACT_SALES", name="Contact Sales Lead", qty=1, price=0)]
-
-    first = body.items[0]
-
-    # (C) upsert customer
-    cust = db.query(Customer).filter(Customer.email == str(body.customer_email)).first()
-    if not cust:
-        cust = Customer(
-            email=str(body.customer_email),
-            name=(body.customer_name or None),
-            created_at=datetime.utcnow(),
-        )
-        db.add(cust)
-        db.flush()
-    else:
-        if body.customer_name and body.customer_name.strip() and cust.name != body.customer_name.strip():
-            cust.name = body.customer_name.strip()
-
-    # (D) find/create product
-    prod = None
-    if first.sku:
-        prod = db.query(Product).filter(Product.sku == first.sku).first()
-    if not prod:
-        gen_sku = first.sku or ("SKU" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8)))
-        gen_name = first.name or "Custom Product"
-        prod = Product(
-            sku=gen_sku,
-            name=gen_name,
-            category="lead",
-            is_active=True,
-            description="Auto-created from lead form",
-            meta={"source": "lead_form"},
-            created_at=datetime.utcnow(),
-        )
-        db.add(prod)
-        db.flush()
-
-    # (E) amount
-    amount_cents = int(body.grand_total or 0)
-    if amount_cents == 0:
-        try:
-            amount_cents = int(first.price or 0) * int(first.qty or 1)
-        except Exception:
-            amount_cents = 0
-
-    # (F) create order
-    meta = {
-        "customer_email": str(body.customer_email),
-        "customer_name": body.customer_name,
-        "company": body.company,
-        "phone": body.phone,
-        "items": [x.model_dump() for x in body.items],
-        "grand_total": body.grand_total,
-        "note": body.note,
-        "form_type": body.form_type,
-        "source": "public_site",
-    }
-
-    o = Order(
-        order_code=_code(),
-        customer_id=cust.id,
-        product_id=prod.id,
-        amount_cents=amount_cents,
-        currency="THB",
-        status="pending",
-        meta=json.dumps(meta, ensure_ascii=False),
-        created_at=datetime.utcnow(),
+@router.get("/me/licenses")
+def my_licenses(current = Depends(get_current_client), db: Session = Depends(get_db)):
+    rows = (
+        db.query(License)
+        .filter(License.client_id == current.id)
+        .order_by(License.id.desc())
+        .all()
     )
+    return [
+        {
+            "id": lic.id,
+            "licenseKey": lic.license_key,
+            "type": lic.term,
+            "productSku": lic.product_sku or "-",
+            "issuedAt": lic.issued_at.isoformat() if lic.issued_at else None,
+            "expiresAt": lic.expires_at.isoformat() if lic.expires_at else None,
+            "status": lic.status,
+        }
+        for lic in rows
+    ]
 
-    db.add(o)
+
+# =========================
+#        CHANGE PASSWORD
+# =========================
+
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordIn,
+    current = Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.client_id == current.id)
+        .first()
+    )
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    # เช็ครหัสเดิม
+    if not bcrypt.verify(body.old_password, cred.password_hash):
+        raise HTTPException(status_code=400, detail="รหัสผ่านเดิมไม่ถูกต้อง")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร",
+        )
+
+    if body.old_password == body.new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านเดิม",
+        )
+
+    cred.password_hash = hash_password(body.new_password)
     db.commit()
-    db.refresh(o)
 
-    publish("order_created", {
-        "id": o.id,
-        "order_code": o.order_code,
-        "customer_email": body.customer_email,
-        "customer_name": body.customer_name,
-        "product_sku": prod.sku,
-        "amount_cents": o.amount_cents,
-        "created_at": o.created_at.isoformat() if o.created_at else None,
-    })
+    return {"message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว"}
 
-    return _to_out(o)
+
+# =========================
+#        FORGOT PASSWORD
+# =========================
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+def _gen_password(length: int = 12) -> str:
+    import secrets, string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+@router.post("/forgot-password")
+def forgot_password(
+    body: ForgotPasswordIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    ลืมรหัสผ่าน:
+    - รับ email
+    - ถ้ามี client + credential → สร้าง temporary password ใหม่
+    - ส่ง temp password + username ไปทางอีเมล
+    - Response เป็น generic message (ไม่บอกว่ามี/ไม่มี email ในระบบ)
+    """
+    generic_response = {
+        "message": "We have sent you a temporary password."
+    }
+
+    client: Client | None = (
+        db.query(Client)
+        .filter(Client.email == body.email)
+        .first()
+    )
+    if not client:
+        return generic_response
+
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.client_id == client.id)
+        .first()
+    )
+
+    # ถ้าไม่มี credential เลย ให้สร้าง username ให้
+    if not cred:
+        base_username = (client.email.split("@")[0] if client.email else f"user{client.id}")
+        username = base_username
+        i = 1
+        while db.query(ClientCredential).filter(ClientCredential.username == username).first():
+            i += 1
+            username = f"{base_username}{i}"
+        cred = ClientCredential(
+            client_id=client.id,
+            username=username,
+            password_hash="",
+        )
+        db.add(cred)
+        db.flush()
+
+    # สร้าง temp password ใหม่
+    temp_pwd = _gen_password(12)
+    cred.password_hash = hash_password(temp_pwd)
+    db.commit()
+
+    # เตรียมเนื้อหาเมล
+    subject = f"Your {settings.APP_NAME} temporary password"
+    text_body = (
+        f"Hello {client.first_name or ''} {client.last_name or ''},\n\n"
+        f"A temporary password has been generated for your {settings.APP_NAME} account.\n\n"
+        f"Username: {cred.username}\n"
+        f"Temporary password: {temp_pwd}\n\n"
+        f"Login URL: {settings.PORTAL_URL}\n"
+        f"Please log in and change your password immediately.\n"
+    ).strip()
+
+    html_body = (
+        "<pre style='font-family:ui-monospace,Menlo,Consolas,monospace'>"
+        + text_body +
+        "</pre>"
+    )
+
+    background.add_task(
+        send_email,
+        client.email,
+        subject,
+        html_body,
+        True,   # is_html
+        text_body,
+    )
+
+    return generic_response

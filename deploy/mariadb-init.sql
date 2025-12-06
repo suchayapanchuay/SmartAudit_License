@@ -108,18 +108,20 @@ CREATE TABLE licenses (
   INDEX idx_licenses_product_sku (product_sku)
 ) ENGINE=InnoDB;
 
--- ========= EMAIL TEMPLATES =========
-CREATE TABLE IF NOT EXISTS email_templates (
-  id          INT AUTO_INCREMENT PRIMARY KEY,
-  slug        VARCHAR(64)  NOT NULL UNIQUE,            -- เช่น "welcome"
-  name        VARCHAR(255) NOT NULL,                   -- ชื่ออ่านง่าย
+DROP TABLE IF EXISTS email_templates;
+CREATE TABLE email_templates (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,       -- UUID
+  slug        VARCHAR(64)  NOT NULL UNIQUE,
+  name        VARCHAR(255) NOT NULL,
   subject     VARCHAR(255) NOT NULL,
-  body        MEDIUMTEXT   NOT NULL,                   -- รองรับ HTML ยาว
-  is_html     TINYINT(1)   NOT NULL DEFAULT 1,         -- 1 = HTML, 0 = Text
-  status      ENUM('Enabled','Disabled') NOT NULL DEFAULT 'Enabled',
+  body        MEDIUMTEXT   NOT NULL,
+  is_html     TINYINT(1)   NOT NULL DEFAULT 1,
+  status      ENUM('Active','Draft','Disabled') NOT NULL DEFAULT 'Active',
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- SEED: welcome template (skip ถ้ามีแล้ว)
 INSERT INTO email_templates (slug, name, subject, body, is_html, status)
