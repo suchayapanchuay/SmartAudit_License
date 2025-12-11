@@ -16,7 +16,7 @@ from utils.license_key import generate_license_key
 from utils.template_renderer import render_template
 from utils.mailer import send_email
 from utils.settings import settings
-from utils.passwords import hash_password  # ✅ ใช้ฟังก์ชันกันเคส >72 bytes
+from utils.passwords import hash_password  
 
 router = APIRouter(prefix="/api", tags=["clients"])
 
@@ -100,7 +100,7 @@ def create_client(
     background: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    # duplicates
+    # --- ตรวจซ้ำ email / username ---
     if db.query(Client).filter(Client.email == body.profile.email).first():
         raise HTTPException(status_code=409, detail="Email already exists")
     if db.query(ClientCredential).filter(ClientCredential.username == body.credentials.username).first():
@@ -108,7 +108,7 @@ def create_client(
 
     now = datetime.utcnow()
 
-    # create client
+    # --- สร้าง client ---
     client = Client(
         request_type=body.requestType,
         source=body.source,
@@ -126,19 +126,19 @@ def create_client(
         created_at=now,
     )
     db.add(client)
-    db.flush()  # ได้ client.id ก่อน
+    db.flush()  # ให้ได้ client.id มาก่อน
 
-    # credentials
-    plain_pw = body.credentials.password
+    # --- CREDENTIALS (จำ plain password ไว้ใช้ในอีเมล) ---
+    plain_pw = body.credentials.password  # <= รหัสจริงที่ user กรอก
     cred = ClientCredential(
         client_id=client.id,
         username=body.credentials.username,
-        password_hash=hash_password(plain_pw),  # ✅
+        password_hash=hash_password(plain_pw),  # เก็บเฉพาะ hash ใน DB
         created_at=now,
     )
     db.add(cred)
 
-    # license decision
+    # --- LICENSE ---
     license_key = generate_license_key()
 
     req = body.requestType  # 'trial' | 'purchase' | 'support'
@@ -163,8 +163,8 @@ def create_client(
     lic = License(
         client_id=client.id,
         license_key=license_key,
-        term=term,                       # เก็บค่าตาม requestType
-        product_sku=product_sku,         # อาจเป็น None (support)
+        term=term,
+        product_sku=product_sku,
         duration_days=duration_days,
         max_activations=1,
         activations_used=0,
@@ -175,7 +175,7 @@ def create_client(
     )
     db.add(lic)
 
-    # commit with rollback guard
+    # --- COMMIT ---
     try:
         db.commit()
     except Exception as e:
@@ -185,18 +185,29 @@ def create_client(
     db.refresh(client)
     db.refresh(lic)
 
-    # email variables
+    # ดึง credential ล่าสุด เผื่ออนาคตมีการเปลี่ยน username
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.client_id == client.id)
+        .first()
+    )
+
+    # --- EMAIL VARIABLES (สำคัญ: plain_password อยู่ตรงนี้) ---
     vars_map = {
         "client": {
+            "id": client.id,
+            "request_type": client.request_type,
             "first_name": client.first_name or "",
             "last_name": client.last_name or "",
             "email": client.email,
             "company": client.company or "",
             "country": client.country or "",
-            "username": body.credentials.username,
+            "username": (cred.username if cred else body.credentials.username),
+            # ✅ ส่งรหัสจริงเข้า template
             "plain_password": plain_pw,
         },
         "license": {
+            "id": lic.id,
             "license_key": lic.license_key,
             "term": lic.term,
             "product_sku": lic.product_sku or "-",
@@ -212,7 +223,9 @@ def create_client(
         }
     }
 
-    # read template (กันล้ม ถ้าตารางยังไม่มา)
+    print("EMAIL VARS_MAP =", vars_map)  # debug ดูใน log ได้ว่ารหัสมาจริง
+
+    # --- RENDER TEMPLATE ---
     tpl = None
     try:
         tpl = (
@@ -228,38 +241,58 @@ def create_client(
         body_rendered = render_template(tpl.body, vars_map)
         is_html = bool(tpl.is_html)
     else:
+        # fallback ถ้าไม่มี template welcome ให้ใช้ข้อความ default
         subject = f"Your {settings.APP_NAME} Account & License"
         body_rendered = f"""
 Hello {vars_map['client']['first_name']} {vars_map['client']['last_name']},
 
-Account
+Account details
 - Email: {vars_map['client']['email']}
 - Username: {vars_map['client']['username']}
-- Password: {vars_map['client']['plain_password']}
+- Temporary password: {vars_map['client']['plain_password']}
 
-License
-- Key: {vars_map['license']['license_key']}
-- Type: {vars_map['license']['term']}
-- SKU: {vars_map['license']['product_sku']}
-- Expires: {vars_map['license']['expires_at'] or '-'}
+License information
+- License key: {vars_map['license']['license_key']}
+- Product: {vars_map['license']['product_sku']}
+- License type: {vars_map['license']['term']}
+- Expiry date: {vars_map['license']['expires_at'] or '-'}
 
-Login: {vars_map['meta']['portal_url']}
+To get started, please follow these steps:
+1) Go to: {vars_map['meta']['portal_url']}
+2) Log in with your username and temporary password above
+3) (Recommended) Change your password after your first login
+4) Activate your license using the license key shown above
 """.strip()
         is_html = False
 
-    # send email
+    # --- SEND EMAIL ---
     if is_html:
+        # ถ้า template เป็น HTML
         background.add_task(
-            send_email, client.email, subject, body_rendered, True,
-            "Please open with an HTML-capable email client."
+            send_email,
+            client.email,
+            subject,
+            body_rendered,
+            True,
+            "Please open with an HTML-capable email client.",
         )
     else:
-        html_pre = f"<pre style='font-family:ui-monospace,Menlo,Consolas,monospace'>{body_rendered}</pre>"
+        html_pre = (
+            "<pre style='font-family:ui-monospace,Menlo,Consolas,monospace'>"
+            f"{body_rendered}</pre>"
+        )
         background.add_task(
-            send_email, client.email, subject, html_pre, True, body_rendered
+            send_email,
+            client.email,
+            subject,
+            html_pre,
+            True,
+            body_rendered,
         )
 
     return _to_out(client, lic)
+
+
 
 # =========================
 #           LIST

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, func
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -21,5 +21,8 @@ class ClientCredential(Base):
     username = Column(String(128), unique=True, index=True, nullable=False)  # <-- แก้ unique=True
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+    
+    is_temp_password = Column(Boolean, nullable=False, default=False)
+    temp_password_expires_at = Column(DateTime, nullable=True)
 
     client = relationship("Client", back_populates="credential")

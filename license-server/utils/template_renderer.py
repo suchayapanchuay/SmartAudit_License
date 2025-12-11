@@ -1,50 +1,48 @@
+# # utils/template_renderer.py
+# from typing import Dict, Any
+# from jinja2 import Environment, BaseLoader, select_autoescape
+
+# # Jinja2 environment สำหรับใช้ {{ ... }}
+# _env = Environment(
+#     loader=BaseLoader(),
+#     autoescape=select_autoescape(["html", "xml"]),
+# )
+
+# def render_template(template_str: str, variables: Dict[str, Any]) -> str:
+#     """
+#     render string ที่มี {{ ... }} ด้วย Jinja2
+#     รองรับ nested dict เช่น {{ client.username }}, {{ license.license_key }}
+#     """
+#     if not template_str:
+#         return ""
+#     try:
+#         tmpl = _env.from_string(template_str)
+#         # สำคัญ: ใช้ **variables → ทำให้ client / license / meta เป็นตัวแปรใน template
+#         return tmpl.render(**variables)
+#     except Exception as e:
+#         print("[TEMPLATE ERROR]", e)
+#         # ถ้า template syntax พัง ให้คืนข้อความเดิม กันแอปพัง
+#         return template_str
+
 # utils/template_renderer.py
-import re
-from datetime import datetime
+from jinja2 import Environment, StrictUndefined, TemplateError
 
-_VAR_RX = re.compile(r"{{\s*([a-zA-Z0-9_\.]+)(?:\|([a-zA-Z0-9_]+)(?::([^}]+))?)?\s*}}")
+# สร้าง Jinja2 environment
+env = Environment(
+    autoescape=False,          # ให้เป็น plain text/HTML ตามที่ส่งเข้า
+    undefined=StrictUndefined  # ถ้าใช้ตัวแปรที่ไม่มี จะ error ชัด ๆ
+)
 
-def fmt_dt(dt, pattern="%Y-%m-%d %H:%M"):
-    if not dt:
-        return "-"
-    if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt)
-        except Exception:
-            return dt
-    return dt.strftime(pattern)
-
-def render_template(text: str, vars: dict) -> str:
-    """แทนที่ {{var|filter:arg}}; รองรับ nested a.b; filters: default, fmt"""
-
-    def _get(path, dft="-"):
-        cur = vars
-        for p in path.split("."):
-            if isinstance(cur, dict) and p in cur:
-                cur = cur[p]
-            else:
-                return dft
-        return cur if cur is not None else dft
-
-    def _sub(m):
-        key = m.group(1)
-        flt = m.group(2)
-        arg = m.group(3)
-        val = _get(key)
-
-        if flt == "default":
-            dft = arg if arg is not None else "-"
-            val = val if val not in (None, "-", "") else dft
-
-        if flt == "fmt":
-            pattern = arg if arg else "%Y-%m-%d %H:%M"
-            try:
-                return fmt_dt(val, pattern)
-            except Exception:
-                return str(val)
-
-        if isinstance(val, datetime):
-            return fmt_dt(val)
-        return str(val)
-
-    return _VAR_RX.sub(_sub, text)
+def render_template(template_text: str, variables: dict) -> str:
+    """
+    Render ข้อความด้วย Jinja2 template
+    สามารถใช้ตัวแปร nested เช่น {{ client.first_name }}, {{ license.license_key }}, {{ meta.app_name }}
+    """
+    if not template_text:
+        return ""
+    try:
+        template = env.from_string(template_text)
+        return template.render(**variables)
+    except TemplateError as e:
+        # ถ้า template มีปัญหา ให้คืนข้อความ error ติดมา (จะช่วย debug ได้)
+        return f"[TEMPLATE ERROR] {type(e).__name__}: {e}"
