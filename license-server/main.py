@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from database import Base, engine
+from starlette.middleware.sessions import SessionMiddleware
 
 # โหลดโมเดลก่อน create_all (สำคัญ)
 import models  # noqa: F401
@@ -32,6 +33,11 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     swagger_ui_parameters={"displayRequestDuration": True},
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key="super-secret-key-change-this",
 )
 
 @app.on_event("startup")
