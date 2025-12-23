@@ -1,0 +1,252 @@
+# app/routes/auth_route.py
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
+from passlib.hash import bcrypt
+
+from license_server.database  import get_db
+from license_server.models.client_credential import ClientCredential
+from license_server.models.license import License
+from license_server.models.client import Client
+from license_server.utils.jwt import create_access_token
+from license_server.utils.deps import get_current_client
+from license_server.utils.settings import settings  # ใช้ APP_NAME, PORTAL_URL
+from license_server.utils.passwords import hash_password
+
+from license_server.core.email_smtp import send_email_smtp  # SMTP ใหม่
+
+router = APIRouter(prefix="/api", tags=["auth"])
+
+# =========================
+#           LOGIN
+# =========================
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class LoginOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+@router.post("/login", response_model=LoginOut)
+def login(data: LoginIn, db: Session = Depends(get_db)):
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.username == data.username)
+        .first()
+    )
+    if not cred or not bcrypt.verify(data.password, cred.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
+    token = create_access_token(
+        {"sub": str(cred.client_id), "username": cred.username}
+    )
+    return LoginOut(access_token=token)
+
+
+# =========================
+#             ME
+# =========================
+class MeOut(BaseModel):
+    id: int
+    firstName: str
+    lastName: str
+    email: str
+    company: str | None = None
+    phone: str | None = None
+    country: str | None = None
+    requestType: str
+
+
+@router.get("/me", response_model=MeOut)
+def me(current=Depends(get_current_client)):
+    return MeOut(
+        id=current.id,
+        firstName=current.first_name or "",
+        lastName=current.last_name or "",
+        email=current.email,
+        company=current.company,
+        phone=current.phone,
+        country=current.country,
+        requestType=current.request_type,
+    )
+
+
+# =========================
+#     MY LICENSES (CURRENT)
+# =========================
+@router.get("/me/licenses")
+def my_licenses(
+    current=Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(License)
+        .filter(License.client_id == current.id)
+        .order_by(License.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": lic.id,
+            "licenseKey": lic.license_key,
+            "type": lic.term,
+            "productSku": lic.product_sku or "-",
+            "issuedAt": lic.issued_at.isoformat() if lic.issued_at else None,
+            "expiresAt": lic.expires_at.isoformat() if lic.expires_at else None,
+            "status": lic.status,
+        }
+        for lic in rows
+    ]
+
+
+# =========================
+#        CHANGE PASSWORD
+# =========================
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordIn,
+    current=Depends(get_current_client),
+    db: Session = Depends(get_db),
+):
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.client_id == current.id)
+        .first()
+    )
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    # เช็ครหัสเดิม
+    if not bcrypt.verify(body.old_password, cred.password_hash):
+        raise HTTPException(status_code=400, detail="รหัสผ่านเดิมไม่ถูกต้อง")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร",
+        )
+
+    if body.old_password == body.new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านเดิม",
+        )
+
+    cred.password_hash = hash_password(body.new_password)
+    db.commit()
+
+    return {"message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว"}
+
+
+# =========================
+#        FORGOT PASSWORD
+# =========================
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+def _gen_password(length: int = 12) -> str:
+    import secrets
+    import string
+
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    body: ForgotPasswordIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    ลืมรหัสผ่าน:
+    - รับ email
+    - ถ้ามี client + credential → สร้าง temporary password ใหม่
+    - ส่ง temp password + username ไปทางอีเมล (ผ่าน SMTP ใหม่)
+    - Response เป็น generic message (ไม่บอกว่ามี/ไม่มี email ในระบบ)
+    """
+    generic_response = {
+        "message": "We have sent you a temporary password."
+    }
+
+    client: Client | None = (
+        db.query(Client)
+        .filter(Client.email == body.email)
+        .first()
+    )
+
+    # ถ้าไม่มี client -> ไม่เปิดเผยว่า email ไม่มีในระบบ
+    if not client:
+        return generic_response
+
+    cred = (
+        db.query(ClientCredential)
+        .filter(ClientCredential.client_id == client.id)
+        .first()
+    )
+
+    # ถ้าไม่มี credential เลย ให้สร้าง username ให้
+    if not cred:
+        base_username = (
+            client.email.split("@")[0] if client.email else f"user{client.id}"
+        )
+        username = base_username
+        i = 1
+        while (
+            db.query(ClientCredential)
+            .filter(ClientCredential.username == username)
+            .first()
+        ):
+            i += 1
+            username = f"{base_username}{i}"
+
+        cred = ClientCredential(
+            client_id=client.id,
+            username=username,
+            password_hash="",
+        )
+        db.add(cred)
+        db.flush()
+
+    # สร้าง temp password ใหม่
+    temp_pwd = _gen_password(12)
+    cred.password_hash = hash_password(temp_pwd)
+    db.commit()
+
+    # เตรียมเนื้อหาเมล
+    subject = f"Your {settings.APP_NAME} temporary password"
+
+    text_body = (
+        f"Hello {client.first_name or ''} {client.last_name or ''},\n\n"
+        f"A temporary password has been generated for your {settings.APP_NAME} account.\n\n"
+        f"Username: {cred.username}\n"
+        f"Temporary password: {temp_pwd}\n\n"
+        f"Login URL: {settings.PORTAL_URL}\n"
+        f"Please log in and change your password immediately.\n"
+    ).strip()
+
+    html_body = (
+        "<pre style='font-family:ui-monospace,Menlo,Consolas,monospace'>"
+        + text_body +
+        "</pre>"
+    )
+
+    # ส่งผ่าน SMTP (background task)
+    background.add_task(
+        send_email_smtp,
+        to=client.email,
+        subject=subject,
+        body=html_body,  # ถ้าจะส่งเป็น plain text → ใช้ text_body และ as_html=False
+        as_html=True,
+    )
+
+    return generic_response
